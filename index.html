@@ -237,9 +237,10 @@ const sim = {
   // 控制器（出题默认：P1 I0 D0，让同学自己探索）
   Kp: 1, Ki: 0, Kd: 0, uMax: 15,
   KpTh: 1, KiTh: 0, KdTh: 0, KpX: 0, KiX: 0, KdX: 0, fMax: 30,
+  Tf: 0.05,              // D 项一阶低通时间常数（s）
   noiseSigma: 0.025,
   integral: 0, prevErr: 0, hasPrev: false,
-  prevEX: 0, hasPrevX: false, prevX: 0, wF: 0,
+  prevEX: 0, hasPrevX: false, prevX: 0, wF: 0, xdF: 0,
   obsTheta: 0, obsX: 0,
   bufT: [], bufTrue: [], bufObs: [], bufTgt: [], bufX: [],
   targetNow: 0, uNow: 0,
@@ -380,29 +381,31 @@ const LEVELS = {
         pidInput('kpx', 'Kpx', '外环·位置增益', 0),
         pidInput('kix', 'Kix', '外环·位置积分', 0),
         pidInput('kdx', 'Kdx', '外环·位置阻尼', 0),
+        pidInput('tfd', 'Tf' , 'D 项滤波常数 (s)', 0.05),
       ];
     },
     chips() {
       return [
-        ['P1 I0 D0（出题默认）', [1, 0, 0, 0, 0, 0]],
-        ['只控角度（车乱跑）', [120, 0, 18, 0, 0, 0]],
-        ['参考参数', [120, 0, 18, 0.08, 0, 0.08]],
+        ['P1 I0 D0（出题默认）', [1, 0, 0, 0, 0, 0, 0.05]],
+        ['只控角度（车乱跑）', [120, 0, 18, 0, 0, 0, 0.05]],
+        ['参考参数', [120, 0, 18, 0.08, 0, 0.08, 0.05]],
       ];
     },
-    pidApply(v) { sim.KpTh = v[0]; sim.KiTh = v[1]; sim.KdTh = v[2]; sim.KpX = v[3]; sim.KiX = v[4]; sim.KdX = v[5]; },
+    pidApply(v) { sim.KpTh = v[0]; sim.KiTh = v[1]; sim.KdTh = v[2]; sim.KpX = v[3]; sim.KiX = v[4]; sim.KdX = v[5]; sim.Tf = v[6]; },
     ctrl() {
       // 标准串级 PID：
       // 外环：e_x = 0 - x → PID → θref（限幅 ±0.1 rad 预倾，避免内环被拉离稳定域）
       // 内环：e_θ = θ - θref → PID → F（杆右偏 θ>θref → 车向右追）
+      // D 项均为一阶低通（Tf 可调），抑制观测差分噪声
       const eX = -sim.obsX;
-      const dX = sim.hasPrevX ? (eX - sim.prevEX) / CTRL_DT : 0;
+      sim.xdF += (CTRL_DT / (CTRL_DT + sim.Tf)) * (((eX - sim.prevEX) / CTRL_DT) - sim.xdF);
       sim.integX = clamp(sim.integX + eX * CTRL_DT, -5, 5);
       sim.prevEX = eX; sim.hasPrevX = true;
-      const thetaRef = clamp(sim.KpX * eX + sim.KiX * sim.integX + sim.KdX * dX, -0.1, 0.1);
+      const thetaRef = clamp(sim.KpX * eX + sim.KiX * sim.integX + sim.KdX * sim.xdF, -0.1, 0.1);
       sim.thetaRefNow = thetaRef;
-      // 内环（D 项低通：观测差分噪声大，必须滤波，这是工程实际）
+      // 内环（D 项低通）
       const eTh = sim.obsTheta - thetaRef;
-      sim.wF += (CTRL_DT / (CTRL_DT + 0.05)) * ((sim.obsTheta - sim.obsThetaPrev) / CTRL_DT - sim.wF);
+      sim.wF += (CTRL_DT / (CTRL_DT + sim.Tf)) * ((sim.obsTheta - sim.obsThetaPrev) / CTRL_DT - sim.wF);
       const dTh = sim.wF;
       sim.integTh = clamp(sim.integTh + eTh * CTRL_DT, -5, 5);
       sim.prevErr = eTh; sim.hasPrev = true;
@@ -433,7 +436,7 @@ function pidReset() {
   sim.integral = 0; sim.prevErr = 0; sim.hasPrev = false; sim.prevX = 0;
   sim.prevEX = 0; sim.hasPrevX = false; // L3 外环差分复位
   sim.integTh = 0; sim.integX = 0; // L3 双环积分复位
-  sim.wF = 0; // 内环 D 项低通复位
+  sim.wF = 0; sim.xdF = 0; // D 项低通复位
 }
 
 // ==================== 物理：扭矩摆（第一/二关） ====================
@@ -785,7 +788,8 @@ function buildLevelUI() {
     1: { kp: v => sim.Kp = v, ki: v => sim.Ki = v, kd: v => sim.Kd = v, umax: v => sim.uMax = v },
     2: { kp: v => sim.Kp = v, ki: v => sim.Ki = v, kd: v => sim.Kd = v, umax: v => sim.uMax = v },
     3: { kpth: v => sim.KpTh = v, kith: v => sim.KiTh = v, kdth: v => sim.KdTh = v,
-         kpx: v => sim.KpX = v, kix: v => sim.KiX = v, kdx: v => sim.KdX = v },
+         kpx: v => sim.KpX = v, kix: v => sim.KiX = v, kdx: v => sim.KdX = v,
+         tfd: v => sim.Tf = v },
   };
   onInputHook = (v, id) => { const f = inputMap[sim.level][id]; if (f) f(v); };
   L.pidUI().forEach(p => grid.appendChild(p.render()));
@@ -818,7 +822,7 @@ function refreshPidUI() {
   const map = {
     1: [sim.Kp, sim.Ki, sim.Kd, sim.uMax],
     2: [sim.Kp, sim.Ki, sim.Kd, sim.uMax],
-    3: [sim.KpTh, sim.KiTh, sim.KdTh, sim.KpX, sim.KiX, sim.KdX],
+    3: [sim.KpTh, sim.KiTh, sim.KdTh, sim.KpX, sim.KiX, sim.KdX, sim.Tf],
   }[sim.level];
   L.pidUI().forEach((p, i) => {
     const inp = $(p.id);
@@ -1001,7 +1005,7 @@ function init() {
   }
   if (params.get('preset') === 'ref' && sim.level === 3) {
     // 自动填入 L3 参考参数（调试用）
-    LEVELS[3].pidApply([120, 0, 18, 0.08, 0, 0.08]);
+    LEVELS[3].pidApply([120, 0, 18, 0.08, 0, 0.08, 0.05]);
     refreshPidUI();
   }
   if (params.get('autorun') === '1') {
