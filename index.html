@@ -240,7 +240,11 @@ const sim = {
   KpTh: 1, KiTh: 0, KdTh: 0, KpX: 0, KiX: 0, KdX: 0, fMax: 30,
   TfTh: 0,               // 内环 D 项一阶低通时间常数（s），0=不滤波
   TfX: 0,                // 外环 D 项一阶低通时间常数（s），0=不滤波
-  noiseSigma: 0.025,
+  measTfTh: 0,           // 角度观测总低通（s），0=不滤波
+  measTfX: 0,            // 位置观测总低通（s），0=不滤波
+  noiseSigma: 0.025,     // L1/L2 观测噪声 σ (rad)
+  noiseSigmaTh: 0.025,   // L3 角度观测噪声 σ (rad)
+  noiseSigmaX: 0.01,     // L3 位置观测噪声 σ (m)
   integral: 0, prevErr: 0, hasPrev: false,
   prevEX: 0, hasPrevX: false, prevX: 0, wF: 0, xdF: 0, wF1: 0,
   obsTheta: 0, obsX: 0,
@@ -275,15 +279,16 @@ const LEVELS = {
         pidInput('kd', 'Kd', '微分/Derivative', 0),
         pidInput('umax', '限幅', '输出上限 N·m', 15),
         pidInput('tf1', 'Tf', 'D 项滤波 (s)', 0),
+        pidInput('tfm', 'TfM', '测量值滤波 (s)', 0),
       ];
     },
     chips() {
       return [
-        ['P1 I0 D0（出题默认）', [1, 0, 0, 15, 0]],
+        ['P1 I0 D0（出题默认）', [1, 0, 0, 15, 0, 0]],
       ];
     },
-    pidDefaults() { return [1, 0, 0, 15, 0]; },
-    pidApply(v) { sim.Kp = v[0]; sim.Ki = v[1]; sim.Kd = v[2]; sim.uMax = v[3]; sim.Tf1 = v[4]; },
+    pidDefaults() { return [1, 0, 0, 15, 0, 0]; },
+    pidApply(v) { sim.Kp = v[0]; sim.Ki = v[1]; sim.Kd = v[2]; sim.uMax = v[3]; sim.Tf1 = v[4]; sim.measTfTh = v[5]; },
     ctrl() {
       // 标准 PID：D 项一阶低通（Tf1 可调），积分+差分自维护
       const e = sim.targetNow - sim.obsTheta;
@@ -327,15 +332,16 @@ const LEVELS = {
         pidInput('kd', 'Kd', '微分/Derivative', 0),
         pidInput('umax', '限幅', '输出上限 N·m', 25),
         pidInput('tf1', 'Tf', 'D 项滤波 (s)', 0),
+        pidInput('tfm', 'TfM', '测量值滤波 (s)', 0),
       ];
     },
     chips() {
       return [
-        ['P1 I0 D0（出题默认）', [1, 0, 0, 25, 0]],
+        ['P1 I0 D0（出题默认）', [1, 0, 0, 25, 0, 0]],
       ];
     },
-    pidDefaults() { return [1, 0, 0, 25, 0]; },
-    pidApply(v) { sim.Kp = v[0]; sim.Ki = v[1]; sim.Kd = v[2]; sim.uMax = v[3]; sim.Tf1 = v[4]; },
+    pidDefaults() { return [1, 0, 0, 25, 0, 0]; },
+    pidApply(v) { sim.Kp = v[0]; sim.Ki = v[1]; sim.Kd = v[2]; sim.uMax = v[3]; sim.Tf1 = v[4]; sim.measTfTh = v[5]; },
     ctrl() {
       // 标准 PID：D 项一阶低通（Tf1 可调）
       const e = sim.targetNow - sim.obsTheta;
@@ -368,7 +374,8 @@ const LEVELS = {
       return [
         slider('x0', '初始小车位置', -4, 4, 0.05, 0.3, ' m', v => sim.x0 = v),
         slider('theta0L3', '初始摆角', -20, 20, 1, 5, '°', v => sim.theta0L3 = v / DEG),
-        slider('noiseL3', '观测噪声 σ', 0, 200, 1, 25, ' rad', v => sim.noiseSigma = v / 1000),
+        slider('noiseTh', '角度噪声 σ', 0, 200, 1, 25, ' rad', v => sim.noiseSigmaTh = v / 1000),
+        slider('noiseX', '位置噪声 σ', 0, 100, 1, 10, ' m', v => sim.noiseSigmaX = v / 1000),
         staticRow('摆杆质量 m', () => sim.pc_m.toFixed(2) + ' kg'),
         staticRow('小车质量 M', () => sim.M.toFixed(2) + ' kg'),
       ];
@@ -383,15 +390,17 @@ const LEVELS = {
         pidInput('kix', 'Kix', '外环·位置积分', 0),
         pidInput('kdx', 'Kdx', '外环·位置阻尼', 0),
         pidInput('tfx', 'TfX', '外环 D 滤波 (s)', 0),
+        pidInput('tfmth', 'TfMθ', '角度测量滤波 (s)', 0),
+        pidInput('tfmx', 'TfMX', '位置测量滤波 (s)', 0),
       ];
     },
     chips() {
       return [
-        ['P1 I0 D0（出题默认）', [1, 0, 0, 0, 0, 0, 0, 0]],
+        ['P1 I0 D0（出题默认）', [1, 0, 0, 0, 0, 0, 0, 0, 0, 0]],
       ];
     },
-    pidDefaults() { return [1, 0, 0, 0, 0, 0, 0, 0]; },
-    pidApply(v) { sim.KpTh = v[0]; sim.KiTh = v[1]; sim.KdTh = v[2]; sim.TfTh = v[3]; sim.KpX = v[4]; sim.KiX = v[5]; sim.KdX = v[6]; sim.TfX = v[7]; },
+    pidDefaults() { return [1, 0, 0, 0, 0, 0, 0, 0, 0, 0]; },
+    pidApply(v) { sim.KpTh = v[0]; sim.KiTh = v[1]; sim.KdTh = v[2]; sim.TfTh = v[3]; sim.KpX = v[4]; sim.KiX = v[5]; sim.KdX = v[6]; sim.TfX = v[7]; sim.measTfTh = v[8]; sim.measTfX = v[9]; },
     ctrl() {
       // 标准串级 PID：
       // 外环：e_x = 0 - x → PID → θref（限幅 ±0.1 rad 预倾，避免内环被拉离稳定域）
@@ -808,10 +817,11 @@ function buildLevelUI() {
   grid.innerHTML = '';
   // 按关卡绑定输入回调
   const inputMap = {
-    1: { kp: v => sim.Kp = v, ki: v => sim.Ki = v, kd: v => sim.Kd = v, umax: v => sim.uMax = v, tf1: v => sim.Tf1 = v },
-    2: { kp: v => sim.Kp = v, ki: v => sim.Ki = v, kd: v => sim.Kd = v, umax: v => sim.uMax = v, tf1: v => sim.Tf1 = v },
+    1: { kp: v => sim.Kp = v, ki: v => sim.Ki = v, kd: v => sim.Kd = v, umax: v => sim.uMax = v, tf1: v => sim.Tf1 = v, tfm: v => sim.measTfTh = v },
+    2: { kp: v => sim.Kp = v, ki: v => sim.Ki = v, kd: v => sim.Kd = v, umax: v => sim.uMax = v, tf1: v => sim.Tf1 = v, tfm: v => sim.measTfTh = v },
     3: { kpth: v => sim.KpTh = v, kith: v => sim.KiTh = v, kdth: v => sim.KdTh = v, tfth: v => sim.TfTh = v,
-         kpx: v => sim.KpX = v, kix: v => sim.KiX = v, kdx: v => sim.KdX = v, tfx: v => sim.TfX = v },
+         kpx: v => sim.KpX = v, kix: v => sim.KiX = v, kdx: v => sim.KdX = v, tfx: v => sim.TfX = v,
+         tfmth: v => sim.measTfTh = v, tfmx: v => sim.measTfX = v },
   };
   onInputHook = (v, id) => { const f = inputMap[sim.level][id]; if (f) f(v); };
   L.pidUI().forEach(p => grid.appendChild(p.render()));
@@ -848,9 +858,9 @@ function buildLevelUI() {
 function refreshPidUI() {
   const L = LEVELS[sim.level];
   const map = {
-    1: [sim.Kp, sim.Ki, sim.Kd, sim.uMax, sim.Tf1],
-    2: [sim.Kp, sim.Ki, sim.Kd, sim.uMax, sim.Tf1],
-    3: [sim.KpTh, sim.KiTh, sim.KdTh, sim.TfTh, sim.KpX, sim.KiX, sim.KdX, sim.TfX],
+    1: [sim.Kp, sim.Ki, sim.Kd, sim.uMax, sim.Tf1, sim.measTfTh],
+    2: [sim.Kp, sim.Ki, sim.Kd, sim.uMax, sim.Tf1, sim.measTfTh],
+    3: [sim.KpTh, sim.KiTh, sim.KdTh, sim.TfTh, sim.KpX, sim.KiX, sim.KdX, sim.TfX, sim.measTfTh, sim.measTfX],
   }[sim.level];
   L.pidUI().forEach((p, i) => {
     const inp = $(p.id);
@@ -970,11 +980,16 @@ function stepSim(now) {
 
   let samples = [];
   const L = LEVELS[sim.level];
+  // 测量值总低通系数（Tf=0 时 alpha=1 直通，天然不滤波）：角度/位置独立
+  const aMTh = CTRL_DT / (CTRL_DT + sim.measTfTh);
+  const aMX = CTRL_DT / (CTRL_DT + sim.measTfX);
   for (let t = 0; t < realDt; t += CTRL_DT) {
-    // ① 采样观测（带噪声）
+    // ① 采样观测（带噪声）→ 测量值低通（作用于源头，整个 PID 用滤波后的值）
     sim.obsThetaPrev = sim.obsTheta;
-    sim.obsTheta = sim.theta + sim.noiseSigma * gauss();
-    sim.obsX = sim.x + sim.noiseSigma * 0.4 * gauss();
+    const rawTh = sim.theta + (sim.level === 3 ? sim.noiseSigmaTh : sim.noiseSigma) * gauss();
+    sim.obsTheta = sim.obsTheta + aMTh * (rawTh - sim.obsTheta);
+    const rawX = sim.x + (sim.level === 3 ? sim.noiseSigmaX : sim.noiseSigma * 0.4) * gauss();
+    sim.obsX = sim.obsX + aMX * (rawX - sim.obsX);
     // ② 目标 + 控制（各关内自行维护积分/差分状态）
     sim.targetNow = L.target(sim.t);
     const u = L.ctrl();
@@ -1037,7 +1052,7 @@ function init() {
   }
   if (params.get('preset') === 'ref' && sim.level === 3) {
     // 调试用：填入 L3 已验证参数（不影响同学探索界面）
-    LEVELS[3].pidApply([120, 0, 18, 0.05, 0.08, 0, 0.08, 0.05]);
+    LEVELS[3].pidApply([120, 0, 18, 0.05, 0.08, 0, 0.08, 0.05, 0.05, 0.02]);
     refreshPidUI();
   }
   if (params.get('autorun') === '1') {
