@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <title>PID 训练场 · 倒立摆三关 · ARES</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 <script>
@@ -766,7 +766,7 @@ function pidInput(id, name, sub, def) {
     render() {
       const item = document.createElement('div');
       item.className = 'pid-item';
-      item.innerHTML = `<div class="k">${name} <input type="number" inputmode="decimal" id="${id}" value="${def}" step="any" style="width:64px;background:var(--panel);border:1px solid #33405e;color:var(--text);border-radius:6px;padding:4px 6px;font-size:14px;font-weight:700;"></div>
+      item.innerHTML = `<div class="k">${name} <input type="number" inputmode="decimal" id="${id}" value="${def}" step="any" style="width:76px;background:var(--panel);border:1px solid #33405e;color:var(--text);border-radius:6px;padding:4px 6px;font-size:16px;font-weight:700;"></div>
         <div class="n">${sub}</div>`;
       const inp = item.querySelector('input');
       inp.addEventListener('input', (e) => {
