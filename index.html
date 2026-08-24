@@ -236,11 +236,13 @@ const sim = {
   failed: false,         // 碰边失败标志（暂停等待重置）
   // 控制器（出题默认：P1 I0 D0，让同学自己探索）
   Kp: 1, Ki: 0, Kd: 0, uMax: 15,
+  Tf1: 0.05,             // L1/L2 D 项一阶低通时间常数（s）
   KpTh: 1, KiTh: 0, KdTh: 0, KpX: 0, KiX: 0, KdX: 0, fMax: 30,
-  Tf: 0.05,              // D 项一阶低通时间常数（s）
+  TfTh: 0.05,            // 内环 D 项一阶低通时间常数（s）
+  TfX: 0.05,             // 外环 D 项一阶低通时间常数（s）
   noiseSigma: 0.025,
   integral: 0, prevErr: 0, hasPrev: false,
-  prevEX: 0, hasPrevX: false, prevX: 0, wF: 0, xdF: 0,
+  prevEX: 0, hasPrevX: false, prevX: 0, wF: 0, xdF: 0, wF1: 0,
   obsTheta: 0, obsX: 0,
   bufT: [], bufTrue: [], bufObs: [], bufTgt: [], bufX: [],
   targetNow: 0, uNow: 0,
@@ -272,24 +274,25 @@ const LEVELS = {
         pidInput('ki', 'Ki', '积分/Integral', 0),
         pidInput('kd', 'Kd', '微分/Derivative', 0),
         pidInput('umax', '限幅', '输出上限 N·m', 15),
+        pidInput('tf1', 'Tf', 'D 项滤波 (s)', 0.05),
       ];
     },
     chips() {
       return [
-        ['P1 I0 D0（出题默认）', [1, 0, 0, 15]],
-        ['P10 I0 D0', [10, 0, 0, 15]],
-        ['P10 I0 D3', [10, 0, 3, 15]],
-        ['P10 I2 D3', [10, 2, 3, 15]],
+        ['P1 I0 D0（出题默认）', [1, 0, 0, 15, 0.05]],
+        ['P10 I0 D0', [10, 0, 0, 15, 0.05]],
+        ['P10 I0 D3', [10, 0, 3, 15, 0.05]],
+        ['P10 I2 D3', [10, 2, 3, 15, 0.05]],
       ];
     },
-    pidApply(v) { sim.Kp = v[0]; sim.Ki = v[1]; sim.Kd = v[2]; sim.uMax = v[3]; },
+    pidApply(v) { sim.Kp = v[0]; sim.Ki = v[1]; sim.Kd = v[2]; sim.uMax = v[3]; sim.Tf1 = v[4]; },
     ctrl() {
-      // 标准 PID：自维护积分/差分
+      // 标准 PID：D 项一阶低通（Tf1 可调），积分+差分自维护
       const e = sim.targetNow - sim.obsTheta;
-      const d = sim.hasPrev ? (e - sim.prevErr) / CTRL_DT : 0;
+      sim.wF1 += (CTRL_DT / (CTRL_DT + sim.Tf1)) * (((e - sim.prevErr) / CTRL_DT) - sim.wF1);
       sim.integral = clamp(sim.integral + e * CTRL_DT, -20, 20);
       sim.prevErr = e; sim.hasPrev = true;
-      return clamp(sim.Kp * e + sim.Ki * sim.integral + sim.Kd * d, -sim.uMax, sim.uMax);
+      return clamp(sim.Kp * e + sim.Ki * sim.integral + sim.Kd * sim.wF1, -sim.uMax, sim.uMax);
     },
     target(t) { return 0; },
     stats() {
@@ -325,24 +328,25 @@ const LEVELS = {
         pidInput('ki', 'Ki', '积分/Integral', 0),
         pidInput('kd', 'Kd', '微分/Derivative', 0),
         pidInput('umax', '限幅', '输出上限 N·m', 25),
+        pidInput('tf1', 'Tf', 'D 项滤波 (s)', 0.05),
       ];
     },
     chips() {
       return [
-        ['P1 I0 D0（出题默认）', [1, 0, 0, 25]],
-        ['P30 I0 D0（追不上）', [30, 0, 0, 25]],
-        ['P30 I30 D5', [30, 30, 5, 30]],
-        ['P35 I40 D6', [35, 40, 6, 30]],
+        ['P1 I0 D0（出题默认）', [1, 0, 0, 25, 0.05]],
+        ['P30 I0 D0（追不上）', [30, 0, 0, 25, 0.05]],
+        ['P30 I30 D5', [30, 30, 5, 30, 0.05]],
+        ['P35 I40 D6', [35, 40, 6, 30, 0.05]],
       ];
     },
-    pidApply(v) { sim.Kp = v[0]; sim.Ki = v[1]; sim.Kd = v[2]; sim.uMax = v[3]; },
+    pidApply(v) { sim.Kp = v[0]; sim.Ki = v[1]; sim.Kd = v[2]; sim.uMax = v[3]; sim.Tf1 = v[4]; },
     ctrl() {
-      // 标准 PID：自维护积分/差分
+      // 标准 PID：D 项一阶低通（Tf1 可调）
       const e = sim.targetNow - sim.obsTheta;
-      const d = sim.hasPrev ? (e - sim.prevErr) / CTRL_DT : 0;
+      sim.wF1 += (CTRL_DT / (CTRL_DT + sim.Tf1)) * (((e - sim.prevErr) / CTRL_DT) - sim.wF1);
       sim.integral = clamp(sim.integral + e * CTRL_DT, -20, 20);
       sim.prevErr = e; sim.hasPrev = true;
-      return clamp(sim.Kp * e + sim.Ki * sim.integral + sim.Kd * d, -sim.uMax, sim.uMax);
+      return clamp(sim.Kp * e + sim.Ki * sim.integral + sim.Kd * sim.wF1, -sim.uMax, sim.uMax);
     },
     target(t) { return sim.theta0 + sim.omegaRef * t; },
     stats() {
@@ -378,34 +382,33 @@ const LEVELS = {
         pidInput('kpth', 'Kpθ', '内环·摆角增益', 1),
         pidInput('kith', 'Kiθ', '内环·摆角积分', 0),
         pidInput('kdth', 'Kdθ', '内环·角速度阻尼', 0),
+        pidInput('tfth', 'Tfθ', '内环 D 滤波 (s)', 0.05),
         pidInput('kpx', 'Kpx', '外环·位置增益', 0),
         pidInput('kix', 'Kix', '外环·位置积分', 0),
         pidInput('kdx', 'Kdx', '外环·位置阻尼', 0),
-        pidInput('tfd', 'Tf' , 'D 项滤波常数 (s)', 0.05),
+        pidInput('tfx', 'TfX', '外环 D 滤波 (s)', 0.05),
       ];
     },
     chips() {
       return [
-        ['P1 I0 D0（出题默认）', [1, 0, 0, 0, 0, 0, 0.05]],
-        ['只控角度（车乱跑）', [120, 0, 18, 0, 0, 0, 0.05]],
-        ['参考参数', [120, 0, 18, 0.08, 0, 0.08, 0.05]],
+        ['P1 I0 D0（出题默认）', [1, 0, 0, 0.05, 0, 0, 0, 0.05]],
       ];
     },
-    pidApply(v) { sim.KpTh = v[0]; sim.KiTh = v[1]; sim.KdTh = v[2]; sim.KpX = v[3]; sim.KiX = v[4]; sim.KdX = v[5]; sim.Tf = v[6]; },
+    pidApply(v) { sim.KpTh = v[0]; sim.KiTh = v[1]; sim.KdTh = v[2]; sim.TfTh = v[3]; sim.KpX = v[4]; sim.KiX = v[5]; sim.KdX = v[6]; sim.TfX = v[7]; },
     ctrl() {
       // 标准串级 PID：
       // 外环：e_x = 0 - x → PID → θref（限幅 ±0.1 rad 预倾，避免内环被拉离稳定域）
       // 内环：e_θ = θ - θref → PID → F（杆右偏 θ>θref → 车向右追）
       // D 项均为一阶低通（Tf 可调），抑制观测差分噪声
       const eX = -sim.obsX;
-      sim.xdF += (CTRL_DT / (CTRL_DT + sim.Tf)) * (((eX - sim.prevEX) / CTRL_DT) - sim.xdF);
+      sim.xdF += (CTRL_DT / (CTRL_DT + sim.TfX)) * (((eX - sim.prevEX) / CTRL_DT) - sim.xdF);
       sim.integX = clamp(sim.integX + eX * CTRL_DT, -5, 5);
       sim.prevEX = eX; sim.hasPrevX = true;
       const thetaRef = clamp(sim.KpX * eX + sim.KiX * sim.integX + sim.KdX * sim.xdF, -0.1, 0.1);
       sim.thetaRefNow = thetaRef;
       // 内环（D 项低通）
       const eTh = sim.obsTheta - thetaRef;
-      sim.wF += (CTRL_DT / (CTRL_DT + sim.Tf)) * ((sim.obsTheta - sim.obsThetaPrev) / CTRL_DT - sim.wF);
+      sim.wF += (CTRL_DT / (CTRL_DT + sim.TfTh)) * ((sim.obsTheta - sim.obsThetaPrev) / CTRL_DT - sim.wF);
       const dTh = sim.wF;
       sim.integTh = clamp(sim.integTh + eTh * CTRL_DT, -5, 5);
       sim.prevErr = eTh; sim.hasPrev = true;
@@ -436,7 +439,7 @@ function pidReset() {
   sim.integral = 0; sim.prevErr = 0; sim.hasPrev = false; sim.prevX = 0;
   sim.prevEX = 0; sim.hasPrevX = false; // L3 外环差分复位
   sim.integTh = 0; sim.integX = 0; // L3 双环积分复位
-  sim.wF = 0; sim.xdF = 0; // D 项低通复位
+  sim.wF = 0; sim.xdF = 0; sim.wF1 = 0; // D 项低通复位
 }
 
 // ==================== 物理：扭矩摆（第一/二关） ====================
@@ -506,9 +509,13 @@ function initChart() {
         y: { title: { display: true, text: '角度 (deg)' }, grid: { color: '#232e46' } },
         y1: { position: 'right', title: { display: true, text: '位置 x (m)' }, grid: { drawOnChartArea: false } }
       },
-      plugins: { legend: { labels: { boxWidth: 12 } } }
+      plugins: { legend: { labels: { boxWidth: 12, filter: (item, data) => !(item.datasetIndex === 3 && sim.level !== 3) } } }
     }
   });
+  // 图表初始化后按当前关卡同步图例（L1/L2 隐藏 x 曲线和右轴）
+  chart.data.datasets[3].hidden = (sim.level !== 3);
+  chart.options.scales.y1.display = (sim.level === 3);
+  chart.update('none');
 }
 
 // ==================== 画布：扭矩摆 ====================
@@ -785,11 +792,10 @@ function buildLevelUI() {
   grid.innerHTML = '';
   // 按关卡绑定输入回调
   const inputMap = {
-    1: { kp: v => sim.Kp = v, ki: v => sim.Ki = v, kd: v => sim.Kd = v, umax: v => sim.uMax = v },
-    2: { kp: v => sim.Kp = v, ki: v => sim.Ki = v, kd: v => sim.Kd = v, umax: v => sim.uMax = v },
-    3: { kpth: v => sim.KpTh = v, kith: v => sim.KiTh = v, kdth: v => sim.KdTh = v,
-         kpx: v => sim.KpX = v, kix: v => sim.KiX = v, kdx: v => sim.KdX = v,
-         tfd: v => sim.Tf = v },
+    1: { kp: v => sim.Kp = v, ki: v => sim.Ki = v, kd: v => sim.Kd = v, umax: v => sim.uMax = v, tf1: v => sim.Tf1 = v },
+    2: { kp: v => sim.Kp = v, ki: v => sim.Ki = v, kd: v => sim.Kd = v, umax: v => sim.uMax = v, tf1: v => sim.Tf1 = v },
+    3: { kpth: v => sim.KpTh = v, kith: v => sim.KiTh = v, kdth: v => sim.KdTh = v, tfth: v => sim.TfTh = v,
+         kpx: v => sim.KpX = v, kix: v => sim.KiX = v, kdx: v => sim.KdX = v, tfx: v => sim.TfX = v },
   };
   onInputHook = (v, id) => { const f = inputMap[sim.level][id]; if (f) f(v); };
   L.pidUI().forEach(p => grid.appendChild(p.render()));
@@ -815,14 +821,20 @@ function buildLevelUI() {
   // 统计
   $('stats').innerHTML = '';
   updateStats();
+  // 图表图例按关卡动态调整：L1/L2 无位置数据，隐藏 x 曲线和右轴
+  if (chart) {
+    chart.data.datasets[3].hidden = (sim.level !== 3);
+    chart.options.scales.y1.display = (sim.level === 3);
+    chart.update('none');
+  }
 }
 
 function refreshPidUI() {
   const L = LEVELS[sim.level];
   const map = {
-    1: [sim.Kp, sim.Ki, sim.Kd, sim.uMax],
-    2: [sim.Kp, sim.Ki, sim.Kd, sim.uMax],
-    3: [sim.KpTh, sim.KiTh, sim.KdTh, sim.KpX, sim.KiX, sim.KdX, sim.Tf],
+    1: [sim.Kp, sim.Ki, sim.Kd, sim.uMax, sim.Tf1],
+    2: [sim.Kp, sim.Ki, sim.Kd, sim.uMax, sim.Tf1],
+    3: [sim.KpTh, sim.KiTh, sim.KdTh, sim.TfTh, sim.KpX, sim.KiX, sim.KdX, sim.TfX],
   }[sim.level];
   L.pidUI().forEach((p, i) => {
     const inp = $(p.id);
@@ -1004,8 +1016,8 @@ function init() {
     }
   }
   if (params.get('preset') === 'ref' && sim.level === 3) {
-    // 自动填入 L3 参考参数（调试用）
-    LEVELS[3].pidApply([120, 0, 18, 0.08, 0, 0.08, 0.05]);
+    // 调试用：填入 L3 已验证参数（不影响同学探索界面）
+    LEVELS[3].pidApply([120, 0, 18, 0.05, 0.08, 0, 0.08, 0.05]);
     refreshPidUI();
   }
   if (params.get('autorun') === '1') {
