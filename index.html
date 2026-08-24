@@ -280,9 +280,6 @@ const LEVELS = {
     chips() {
       return [
         ['P1 I0 D0（出题默认）', [1, 0, 0, 15, 0.05]],
-        ['P10 I0 D0', [10, 0, 0, 15, 0.05]],
-        ['P10 I0 D3', [10, 0, 3, 15, 0.05]],
-        ['P10 I2 D3', [10, 2, 3, 15, 0.05]],
       ];
     },
     pidApply(v) { sim.Kp = v[0]; sim.Ki = v[1]; sim.Kd = v[2]; sim.uMax = v[3]; sim.Tf1 = v[4]; },
@@ -334,9 +331,6 @@ const LEVELS = {
     chips() {
       return [
         ['P1 I0 D0（出题默认）', [1, 0, 0, 25, 0.05]],
-        ['P30 I0 D0（追不上）', [30, 0, 0, 25, 0.05]],
-        ['P30 I30 D5', [30, 30, 5, 30, 0.05]],
-        ['P35 I40 D6', [35, 40, 6, 30, 0.05]],
       ];
     },
     pidApply(v) { sim.Kp = v[0]; sim.Ki = v[1]; sim.Kd = v[2]; sim.uMax = v[3]; sim.Tf1 = v[4]; },
@@ -772,11 +766,16 @@ function pidInput(id, name, sub, def) {
     render() {
       const item = document.createElement('div');
       item.className = 'pid-item';
-      item.innerHTML = `<div class="k">${name} <input type="number" id="${id}" value="${def}" step="any" style="width:64px;background:var(--panel);border:1px solid #33405e;color:var(--text);border-radius:6px;padding:4px 6px;font-size:14px;font-weight:700;"></div>
+      item.innerHTML = `<div class="k">${name} <input type="number" inputmode="decimal" id="${id}" value="${def}" step="any" style="width:64px;background:var(--panel);border:1px solid #33405e;color:var(--text);border-radius:6px;padding:4px 6px;font-size:14px;font-weight:700;"></div>
         <div class="n">${sub}</div>`;
-      item.querySelector('input').addEventListener('input', (e) => {
+      const inp = item.querySelector('input');
+      inp.addEventListener('input', (e) => {
         const v = parseFloat(e.target.value);
         if (!isNaN(v)) onInputHook(v, id);
+      });
+      // 回车失去焦点：手机键盘确认后输入框自动收起，无需点空白处
+      inp.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') inp.blur();
       });
       return item;
     }
