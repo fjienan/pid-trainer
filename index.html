@@ -6,6 +6,18 @@
 <title>PID 训练场 · 倒立摆三关 · ARES</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 <script>
+window.onerror = function (msg, src, line, col) {
+  document.title = 'ERR ' + msg + ' @' + line + ':' + col;
+  var el = document.getElementById('errbox') || (function () {
+    var d = document.createElement('div');
+    d.id = 'errbox';
+    d.style.cssText = 'position:fixed;left:8px;top:8px;z-index:9999;background:#5b1a1a;color:#fff;padding:8px 12px;border-radius:6px;font:12px monospace;max-width:90%;word-break:break-all;';
+    document.body.appendChild(d);
+    return d;
+  })();
+  el.textContent = 'ERR: ' + msg + ' @' + line + ':' + col;
+  return false;
+};
 window.addEventListener('load', function () {
   if (typeof Chart === 'undefined') {
     var s = document.createElement('script');
@@ -705,11 +717,9 @@ function buildLevelUI() {
   $('drag-hint').textContent = L.dragHint;
   // 统计
   $('stats').innerHTML = '';
-  statHelpers = L.stats();
   updateStats();
 }
 
-let statHelpers = [];
 function refreshPidUI() {
   const L = LEVELS[sim.level];
   const map = {
@@ -723,7 +733,7 @@ function refreshPidUI() {
   });
 }
 function updateStats() {
-  const items = statHelpers();
+  const items = LEVELS[sim.level].stats();
   $('stats').innerHTML = items.map(([name, val, color]) =>
     `<div class="stat"><div class="v" style="color:${color};">${val}</div><div class="l">${name}</div></div>`).join('');
 }
