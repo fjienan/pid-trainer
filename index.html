@@ -96,7 +96,7 @@ window.addEventListener('load', function () {
   .chip:hover { border-color: var(--accent); color: var(--accent); }
   .stat-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
   .stat { background: var(--panel2); border-radius: 8px; padding: 10px; text-align: center; }
-  .stat .v { font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .stat .v { font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; }
   .stat .l { font-size: 11px; color: var(--muted); margin-top: 2px; }
   #chart { width: 100%; height: 320px; position: relative; }
   .note { font-size: 12px; color: var(--muted); line-height: 1.7; }
@@ -236,10 +236,10 @@ const sim = {
   failed: false,         // 碰边失败标志（暂停等待重置）
   // 控制器（出题默认：P1 I0 D0，让同学自己探索）
   Kp: 1, Ki: 0, Kd: 0, uMax: 15,
-  Tf1: 0.05,             // L1/L2 D 项一阶低通时间常数（s）
+  Tf1: 0,                // L1/L2 D 项一阶低通时间常数（s），0=不滤波
   KpTh: 1, KiTh: 0, KdTh: 0, KpX: 0, KiX: 0, KdX: 0, fMax: 30,
-  TfTh: 0.05,            // 内环 D 项一阶低通时间常数（s）
-  TfX: 0.05,             // 外环 D 项一阶低通时间常数（s）
+  TfTh: 0,               // 内环 D 项一阶低通时间常数（s），0=不滤波
+  TfX: 0,                // 外环 D 项一阶低通时间常数（s），0=不滤波
   noiseSigma: 0.025,
   integral: 0, prevErr: 0, hasPrev: false,
   prevEX: 0, hasPrevX: false, prevX: 0, wF: 0, xdF: 0, wF1: 0,
@@ -274,14 +274,15 @@ const LEVELS = {
         pidInput('ki', 'Ki', '积分/Integral', 0),
         pidInput('kd', 'Kd', '微分/Derivative', 0),
         pidInput('umax', '限幅', '输出上限 N·m', 15),
-        pidInput('tf1', 'Tf', 'D 项滤波 (s)', 0.05),
+        pidInput('tf1', 'Tf', 'D 项滤波 (s)', 0),
       ];
     },
     chips() {
       return [
-        ['P1 I0 D0（出题默认）', [1, 0, 0, 15, 0.05]],
+        ['P1 I0 D0（出题默认）', [1, 0, 0, 15, 0]],
       ];
     },
+    pidDefaults() { return [1, 0, 0, 15, 0]; },
     pidApply(v) { sim.Kp = v[0]; sim.Ki = v[1]; sim.Kd = v[2]; sim.uMax = v[3]; sim.Tf1 = v[4]; },
     ctrl() {
       // 标准 PID：D 项一阶低通（Tf1 可调），积分+差分自维护
@@ -325,14 +326,15 @@ const LEVELS = {
         pidInput('ki', 'Ki', '积分/Integral', 0),
         pidInput('kd', 'Kd', '微分/Derivative', 0),
         pidInput('umax', '限幅', '输出上限 N·m', 25),
-        pidInput('tf1', 'Tf', 'D 项滤波 (s)', 0.05),
+        pidInput('tf1', 'Tf', 'D 项滤波 (s)', 0),
       ];
     },
     chips() {
       return [
-        ['P1 I0 D0（出题默认）', [1, 0, 0, 25, 0.05]],
+        ['P1 I0 D0（出题默认）', [1, 0, 0, 25, 0]],
       ];
     },
+    pidDefaults() { return [1, 0, 0, 25, 0]; },
     pidApply(v) { sim.Kp = v[0]; sim.Ki = v[1]; sim.Kd = v[2]; sim.uMax = v[3]; sim.Tf1 = v[4]; },
     ctrl() {
       // 标准 PID：D 项一阶低通（Tf1 可调）
@@ -376,18 +378,19 @@ const LEVELS = {
         pidInput('kpth', 'Kpθ', '内环·摆角增益', 1),
         pidInput('kith', 'Kiθ', '内环·摆角积分', 0),
         pidInput('kdth', 'Kdθ', '内环·角速度阻尼', 0),
-        pidInput('tfth', 'Tfθ', '内环 D 滤波 (s)', 0.05),
+        pidInput('tfth', 'Tfθ', '内环 D 滤波 (s)', 0),
         pidInput('kpx', 'Kpx', '外环·位置增益', 0),
         pidInput('kix', 'Kix', '外环·位置积分', 0),
         pidInput('kdx', 'Kdx', '外环·位置阻尼', 0),
-        pidInput('tfx', 'TfX', '外环 D 滤波 (s)', 0.05),
+        pidInput('tfx', 'TfX', '外环 D 滤波 (s)', 0),
       ];
     },
     chips() {
       return [
-        ['P1 I0 D0（出题默认）', [1, 0, 0, 0.05, 0, 0, 0, 0.05]],
+        ['P1 I0 D0（出题默认）', [1, 0, 0, 0, 0, 0, 0, 0]],
       ];
     },
+    pidDefaults() { return [1, 0, 0, 0, 0, 0, 0, 0]; },
     pidApply(v) { sim.KpTh = v[0]; sim.KiTh = v[1]; sim.KdTh = v[2]; sim.TfTh = v[3]; sim.KpX = v[4]; sim.KiX = v[5]; sim.KdX = v[6]; sim.TfX = v[7]; },
     ctrl() {
       // 标准串级 PID：
@@ -500,10 +503,24 @@ function initChart() {
       animation: false,
       scales: {
         x: { type: 'linear', ticks: { maxTicksLimit: 8, callback: function (v) { return v + 's'; } }, grid: { color: '#232e46' } },
-        y: { title: { display: true, text: '角度 (deg)' }, grid: { color: '#232e46' } },
-        y1: { position: 'right', title: { display: true, text: '位置 x (m)' }, grid: { drawOnChartArea: false } }
+        y: {
+          title: { display: true, text: '角度°' }, grid: { color: '#232e46' },
+          ticks: {
+            maxTicksLimit: 6,
+            callback: function (v) {
+              if (Math.abs(v) >= 1000) return (v / 1000).toFixed(1) + 'k';
+              return v;
+            }
+          }
+        },
+        y1: { position: 'right', title: { display: true, text: '位置 m' }, grid: { drawOnChartArea: false } }
       },
-      plugins: { legend: { labels: { boxWidth: 12, filter: (item, data) => !(item.datasetIndex === 3 && sim.level !== 3) } } }
+      plugins: {
+        legend: {
+          position: 'bottom',
+          labels: { boxWidth: 12, padding: 6, filter: (item, data) => !(item.datasetIndex === 3 && sim.level !== 3) }
+        }
+      }
     }
   });
   // 图表初始化后按当前关卡同步图例（L1/L2 隐藏 x 曲线和右轴）
@@ -935,7 +952,11 @@ document.querySelectorAll('.level-btn').forEach(btn => {
     btn.classList.add('active');
     sim.level = parseInt(btn.dataset.lvl);
     sim.running = false; sim.paused = false;
+    // 重置该关 PID 参数为出题默认（消除跨关残留）
+    const L = LEVELS[sim.level];
+    L.pidApply(L.pidDefaults());
     buildLevelUI();
+    refreshPidUI();
     applyInitial();
     setRunningUI();
   });
