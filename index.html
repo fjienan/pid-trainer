@@ -1,0 +1,529 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PID 训练场 · 一阶倒立摆 · ARES</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script>
+// Chart.js CDN 兜底
+window.addEventListener('load', function () {
+  if (typeof Chart === 'undefined') {
+    var s = document.createElement('script');
+    s.src = 'https://unpkg.com/chart.js@4.4.1/dist/chart.umd.min.js';
+    s.onload = initChart;
+    s.onerror = function () { document.getElementById('chart-note').textContent = '图表库加载失败，请检查网络'; };
+    document.head.appendChild(s);
+  } else {
+    initChart();
+  }
+});
+</script>
+<style>
+  :root {
+    --bg: #0f1420;
+    --panel: #1a2233;
+    --panel2: #222c40;
+    --text: #e8ecf3;
+    --muted: #8b96a8;
+    --accent: #4fc3f7;
+    --green: #66d98a;
+    --orange: #ffb74d;
+    --red: #ff6b6b;
+    --blue: #64b5f6;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg); color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    min-height: 100vh; padding: 16px;
+  }
+  h1 { font-size: 22px; font-weight: 700; letter-spacing: .5px; }
+  h1 .sub { font-size: 13px; color: var(--muted); font-weight: 400; margin-left: 8px; }
+  .layout { display: grid; grid-template-columns: minmax(320px, 1fr) 420px; gap: 16px; max-width: 1400px; margin: 12px auto; }
+  .card { background: var(--panel); border-radius: 12px; padding: 16px; border: 1px solid #2a3550; }
+  .card h2 { font-size: 14px; color: var(--accent); margin-bottom: 10px; font-weight: 600; }
+  #pendulum-wrap { position: relative; }
+  #pendulum { width: 100%; display: block; touch-action: none; cursor: grab; }
+  #pendulum:active { cursor: grabbing; }
+  .drag-hint { position: absolute; bottom: 10px; left: 50%; transform: translateX(-50%);
+    font-size: 12px; color: var(--muted); background: rgba(15,20,32,.75); padding: 4px 12px; border-radius: 20px; pointer-events: none; }
+  .row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; gap: 8px; }
+  .row label { font-size: 13px; color: var(--muted); min-width: 110px; }
+  .row .val { font-size: 13px; color: var(--text); min-width: 90px; text-align: right; font-variant-numeric: tabular-nums; }
+  input[type=range] { flex: 1; accent-color: var(--accent); }
+  input[type=number], input[type=text] { background: var(--panel2); border: 1px solid #33405e; color: var(--text);
+    border-radius: 6px; padding: 6px 8px; font-size: 13px; width: 86px; font-variant-numeric: tabular-nums; }
+  input[type=number]:focus, input[type=text]:focus { outline: 1px solid var(--accent); }
+  .pid-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .pid-item { background: var(--panel2); border-radius: 8px; padding: 8px 10px; }
+  .pid-item .k { font-size: 17px; font-weight: 700; color: var(--accent); }
+  .pid-item .n { font-size: 11px; color: var(--muted); }
+  .btn { background: var(--accent); border: none; color: #0f1420; font-weight: 600; padding: 8px 14px;
+    border-radius: 8px; font-size: 13px; cursor: pointer; }
+  .btn.ghost { background: transparent; border: 1px solid #33405e; color: var(--text); }
+  .btn:hover { filter: brightness(1.1); }
+  .btn:disabled { opacity: .45; cursor: default; }
+  .btn-row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 4px; }
+  .chips { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
+  .chip { background: var(--panel2); border: 1px solid #33405e; border-radius: 20px; color: var(--text);
+    font-size: 12px; padding: 4px 10px; cursor: pointer; }
+  .chip:hover { border-color: var(--accent); color: var(--accent); }
+  .stat-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+  .stat { background: var(--panel2); border-radius: 8px; padding: 10px; text-align: center; }
+  .stat .v { font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .stat .l { font-size: 11px; color: var(--muted); margin-top: 2px; }
+  #chart { width: 100%; height: 320px; position: relative; }
+  .note { font-size: 12px; color: var(--muted); line-height: 1.7; }
+  .note b { color: var(--orange); font-weight: 600; }
+  .running-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--green); margin-right: 6px; }
+  .paused-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--muted); margin-right: 6px; }
+  @media (max-width: 980px) {
+    .layout { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+  <h1>倒立摆 PID 训练场 <span class="sub">ARES · Robocon 2027 · 一阶倒立摆</span></h1>
+  <div class="layout">
+    <!-- 左：可视化 -->
+    <div class="card" id="pendulum-wrap">
+      <h2>倒立摆状态 <span id="state-dot" style="font-size:12px;"><span class="paused-dot"></span>已暂停</span></h2>
+      <canvas id="pendulum" width="640" height="480"></canvas>
+      <div class="drag-hint">拖动摆杆末端可创建扰动（松手后恢复动力学）</div>
+    </div>
+
+    <!-- 右：控制面板 -->
+    <div>
+      <div class="card" style="margin-bottom:16px;">
+        <h2>PID 参数</h2>
+        <div class="pid-grid">
+          <div class="pid-item">
+            <div class="k">K<sub>p</sub> <span id="kp-val" style="font-size:14px;color:var(--text)">0.00</span></div>
+            <div class="n">比例 / Proportional</div>
+            <input type="range" id="kp" min="0" max="40" step="0.1" value="10" style="width:100%;margin-top:6px;">
+          </div>
+          <div class="pid-item">
+            <div class="k">K<sub>i</sub> <span id="ki-val" style="font-size:14px;color:var(--text)">0.00</span></div>
+            <div class="n">积分 / Integral</div>
+            <input type="range" id="ki" min="0" max="40" step="0.1" value="2" style="width:100%;margin-top:6px;">
+          </div>
+          <div class="pid-item">
+            <div class="k">K<sub>d</sub> <span id="kd-val" style="font-size:14px;color:var(--text)">3.00</span></div>
+            <div class="n">微分 / Derivative</div>
+            <input type="range" id="kd" min="0" max="15" step="0.05" value="3" style="width:100%;margin-top:6px;">
+          </div>
+          <div class="pid-item">
+            <div class="k">限幅 <span id="umax-val" style="font-size:14px;color:var(--text)">15</span> N·m</div>
+            <div class="n">输出限幅 / Saturation</div>
+            <input type="range" id="umax" min="1" max="40" step="1" value="15" style="width:100%;margin-top:6px;">
+          </div>
+        </div>
+        <div class="chips">
+          <span class="chip" onclick="preset(0)">全 0（啥都控不住）</span>
+          <span class="chip" onclick="preset(1)">仅 P</span>
+          <span class="chip" onclick="preset(2)">P + D</span>
+          <span class="chip" onclick="preset(3)">PID 完整</span>
+        </div>
+      </div>
+
+      <div class="card" style="margin-bottom:16px;">
+        <h2>工况设置</h2>
+        <div class="row">
+          <label>初始偏离角度</label>
+          <input type="range" id="theta0" min="-180" max="180" step="1" value="30">
+          <span class="val" id="theta0-val">30°</span>
+        </div>
+        <div class="row">
+          <label>目标角度</label>
+          <input type="range" id="target" min="-45" max="45" step="1" value="0">
+          <span class="val" id="target-val">0°</span>
+        </div>
+        <div class="row">
+          <label>观测噪声 σ</label>
+          <input type="range" id="noise" min="0" max="200" step="1" value="25">
+          <span class="val" id="noise-val">0.025 rad</span>
+        </div>
+        <div class="row">
+          <label>摆长 L</label>
+          <input type="range" id="len" min="0.3" max="0.8" step="0.01" value="0.5">
+          <span class="val" id="len-val">0.50 m</span>
+        </div>
+        <div class="row">
+          <label>摆球质量 m</label>
+          <span class="val" id="mass-val" style="color:var(--orange);font-weight:700;">-- kg</span>
+        </div>
+        <div class="btn-row">
+          <button class="btn" id="btn-run">▶ 开始</button>
+          <button class="btn ghost" id="btn-reset">↺ 重置</button>
+          <button class="btn ghost" id="btn-random">🎲 换一个质量</button>
+        </div>
+        <p class="note" style="margin-top:10px;">质量 m 每次重置随机生成（0.6 ~ 1.8 kg），换质量重新开始仿真。控制器只能看到<b>带噪声的观测</b>，看不到真值。</p>
+      </div>
+
+      <div class="card">
+        <h2>实时数据 <span class="note" style="float:right;">观测 vs 真值 vs 目标</span></h2>
+        <div class="stat-grid" style="margin-bottom:12px;">
+          <div class="stat"><div class="v" id="s-theta" style="color:var(--green);">0.0°</div><div class="l">真值角度</div></div>
+          <div class="stat"><div class="v" id="s-obs" style="color:var(--orange);">0.0°</div><div class="l">观测角度</div></div>
+          <div class="stat"><div class="v" id="s-u" style="color:var(--blue);">0.0</div><div class="l">输出 u (N·m)</div></div>
+        </div>
+        <div id="chart"><canvas id="chart-canvas"></canvas></div>
+        <div id="chart-note" class="note" style="margin-top:6px;">曲线窗口：最近 5 秒 @50Hz 采样</div>
+      </div>
+    </div>
+  </div>
+
+<script>
+// ============ 物理模型：一阶倒立摆 ============
+// θ'' = (g/L)·sinθ + u/(m·L²) − (b/(m·L²))·θ'
+// θ=0 竖直向上。u 为电机力矩。b 为阻尼（干摩擦近似为线性阻尼）。
+const G = 9.81;
+const PHYS_DT = 0.002;        // 物理步长 2ms
+const CTRL_DT = 0.02;         // 控制周期 50Hz
+const CHART_WINDOW = 5;       // 图表窗口秒数
+const MAX_POINTS = Math.ceil(CHART_WINDOW / CTRL_DT); // 250
+
+let sim = {
+  running: false,
+  paused: false,
+  m: 1.2, L: 0.5, b: 0.06,
+  theta: 0, omega: 0,
+  theta0: 30 * Math.PI / 180,
+  target: 0,
+  noiseSigma: 0.025,
+  uMax: 15,
+  Kp: 10, Ki: 2, Kd: 3,
+  // PID 状态
+  integral: 0, prevErr: 0, hasPrev: false,
+  // 图表缓冲
+  t: 0,
+  bufT: [], bufTrue: [], bufObs: [], bufTgt: [],
+  // 观测
+  obsTheta: 0,
+};
+
+function randomMass() { return 0.6 + Math.random() * 1.2; } // 0.6~1.8 kg
+
+function gauss() { // Box-Muller
+  let u = 0, v = 0;
+  while (u === 0) u = Math.random();
+  while (v === 0) v = Math.random();
+  return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
+}
+
+function physicalStep(u) {
+  const { L, m, b } = sim;
+  const tau = m * L * L; // 摆球转动惯量（点质量近似）
+  const alpha = (G / L) * Math.sin(sim.theta) + u / tau - (b / tau) * sim.omega;
+  // 半隐式欧拉
+  sim.omega += alpha * PHYS_DT;
+  sim.theta += sim.omega * PHYS_DT;
+}
+
+function pidCompute() {
+  const e = sim.target - sim.obsTheta; // 只用观测值，同学们会发现自己 D 项被噪声放大
+  sim.integral += e * CTRL_DT;
+  sim.integral = Math.max(-20, Math.min(20, sim.integral)); // 抗积分饱和
+  const deriv = sim.hasPrev ? (e - sim.prevErr) / CTRL_DT : 0;
+  sim.prevErr = e;
+  sim.hasPrev = true;
+  let u = sim.Kp * e + sim.Ki * sim.integral + sim.Kd * deriv;
+  u = Math.max(-sim.uMax, Math.min(sim.uMax, u));
+  return u;
+}
+
+let chart = null;
+function initChart() {
+  const ctx = document.getElementById('chart-canvas').getContext('2d');
+  Chart.defaults.color = '#8b96a8';
+  chart = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: [],
+      datasets: [
+        { label: '真值角度', data: [], borderColor: '#66d98a', borderWidth: 2, pointRadius: 0, tension: 0.3, animation: false },
+        { label: '观测角度', data: [], borderColor: '#ffb74d', borderWidth: 1.5, pointRadius: 0, tension: 0.3, animation: false },
+        { label: '目标角度', data: [], borderColor: '#64b5f6', borderWidth: 2, borderDash: [5, 5], pointRadius: 0, tension: 0, animation: false },
+      ]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      animation: false,
+      scales: {
+        x: { ticks: { maxTicksLimit: 8, callback: function (v) { return this.getLabelForValue(v) + 's'; } }, grid: { color: '#232e46' } },
+        y: { title: { display: true, text: '角度 (deg)' }, grid: { color: '#232e46' } }
+      },
+      plugins: { legend: { labels: { boxWidth: 12 } } }
+    }
+  });
+}
+
+// ============ 画布渲染 ============
+const cv = document.getElementById('pendulum');
+const ctx = cv.getContext('2d');
+let cvW = cv.width, cvH = cv.height;
+const PIVOT = { x: cvW / 2, y: 250 };
+const SCALE = 140; // 1 米 = 140 px
+
+function drawPendulum() {
+  const Lpx = sim.L * SCALE;
+  ctx.clearRect(0, 0, cvW, cvH);
+
+  // 背景网格
+  ctx.strokeStyle = '#1d2740'; ctx.lineWidth = 1;
+  for (let y = 40; y < cvH; y += 40) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(cvW, y); ctx.stroke(); }
+  for (let x = 0; x < cvW; x += 40) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, cvH); ctx.stroke(); }
+
+  // 目标角度虚线（从枢轴出发）
+  const tgt = sim.target * Math.PI / 180;
+  const tx = PIVOT.x + Lpx * Math.sin(tgt), ty = PIVOT.y - Lpx * Math.cos(tgt);
+  ctx.strokeStyle = 'rgba(100,181,246,.35)'; ctx.lineWidth = 2; ctx.setLineDash([6, 6]);
+  ctx.beginPath(); ctx.moveTo(PIVOT.x, PIVOT.y); ctx.lineTo(tx, ty); ctx.stroke();
+  ctx.setLineDash([]);
+
+  // 竖直参考线
+  ctx.strokeStyle = '#2a3550'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(PIVOT.x, 30); ctx.lineTo(PIVOT.x, cvH - 30); ctx.stroke();
+
+  // 摆臂
+  const endX = PIVOT.x + Lpx * Math.sin(sim.theta);
+  const endY = PIVOT.y - Lpx * Math.cos(sim.theta);
+  ctx.strokeStyle = '#e8ecf3'; ctx.lineWidth = 6; ctx.lineCap = 'round';
+  ctx.beginPath(); ctx.moveTo(PIVOT.x, PIVOT.y); ctx.lineTo(endX, endY); ctx.stroke();
+
+  // 摆球
+  const r = 18 + 8 * sim.m;
+  const grad = ctx.createRadialGradient(endX - r * 0.3, endY - r * 0.3, r * 0.2, endX, endY, r);
+  grad.addColorStop(0, '#ffd28a'); grad.addColorStop(1, '#ff8f3d');
+  ctx.fillStyle = grad;
+  ctx.beginPath(); ctx.arc(endX, endY, r, 0, 2 * Math.PI); ctx.fill();
+  ctx.strokeStyle = '#4d2e12'; ctx.lineWidth = 1.5; ctx.stroke();
+
+  // 角度弧线
+  ctx.strokeStyle = '#4fc3f7'; ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.arc(PIVOT.x, PIVOT.y, 55, -Math.PI / 2, -Math.PI / 2 + Math.max(-Math.PI, Math.min(Math.PI, sim.theta)), sim.theta < 0);
+  ctx.stroke();
+
+  // 枢轴基座
+  ctx.fillStyle = '#2a3550';
+  ctx.fillRect(PIVOT.x - 26, PIVOT.y - 8, 52, 24);
+  ctx.fillStyle = '#4fc3f7';
+  ctx.beginPath(); ctx.arc(PIVOT.x, PIVOT.y, 7, 0, 2 * Math.PI); ctx.fill();
+
+  // 文字标注
+  ctx.fillStyle = '#8b96a8'; ctx.font = '12px sans-serif';
+  ctx.fillText('m = ' + sim.m.toFixed(2) + ' kg', 12, 24);
+  ctx.fillText('L = ' + sim.L.toFixed(2) + ' m', 12, 42);
+  ctx.fillText('θ = ' + (sim.theta * 180 / Math.PI).toFixed(1) + '°', 12, 60);
+}
+
+// ============ 拖拽扰动 ============
+let dragging = false;
+function pointerAngle(e) {
+  const rect = cv.getBoundingClientRect();
+  const px = (e.clientX - rect.left) * (cvW / rect.width);
+  const py = (e.clientY - rect.top) * (cvH / rect.height);
+  const dx = px - PIVOT.x, dy = py - PIVOT.y;
+  const r = Math.hypot(dx, dy);
+  const ang = Math.atan2(dx, -dy); // 竖直向上为 0
+  return { ang, r };
+}
+cv.addEventListener('pointerdown', (e) => {
+  const p = pointerAngle(e);
+  if (p.r > 25 && p.r < 200) {
+    dragging = true;
+    cv.setPointerCapture(e.pointerId);
+  }
+});
+cv.addEventListener('pointermove', (e) => {
+  if (!dragging) return;
+  const p = pointerAngle(e);
+  sim.theta = Math.max(-Math.PI, Math.min(Math.PI, p.ang));
+  sim.omega = 0;
+  sim.paused = true; // 拖动期间冻结物理
+  setRunningUI();
+  drawPendulum();
+});
+cv.addEventListener('pointerup', (e) => {
+  if (dragging) {
+    dragging = false;
+    // 松手瞬间把一个小的初始角速度给出去，更像真实扰动
+    sim.omega = Math.random() * 0.4 - 0.2;
+    sim.paused = false;
+    setRunningUI();
+  }
+});
+
+// ============ UI 绑定 ============
+const $ = (id) => document.getElementById(id);
+function bindRange(id, fmt, onInput) {
+  const el = $(id), val = $(id + '-val');
+  el.addEventListener('input', () => {
+    const v = parseFloat(el.value);
+    val.textContent = fmt(v);
+    onInput(v);
+  });
+}
+bindRange('theta0', v => v + '°', v => { sim.theta0 = v * Math.PI / 180; });
+bindRange('target', v => v + '°', v => { sim.target = v * Math.PI / 180; });
+bindRange('noise', v => (v / 1000).toFixed(3) + ' rad', v => { sim.noiseSigma = v / 1000; });
+bindRange('len', v => v.toFixed(2) + ' m', v => {
+  sim.L = v;
+  if (!sim.running) applyInitial(); // 未运行时立即反映到摆上
+});
+bindRange('kp', v => v.toFixed(2), v => sim.Kp = v);
+bindRange('ki', v => v.toFixed(2), v => sim.Ki = v);
+bindRange('kd', v => v.toFixed(2), v => sim.Kd = v);
+bindRange('umax', v => v + ' N·m', v => sim.uMax = v);
+
+function refreshMass() { $('mass-val').textContent = sim.m.toFixed(2) + ' kg'; }
+
+function applyInitial() {
+  sim.theta = sim.theta0;
+  sim.omega = 0;
+  sim.integral = 0; sim.prevErr = 0; sim.hasPrev = false;
+  sim.obsTheta = sim.theta0;
+  sim.bufT = []; sim.bufTrue = []; sim.bufObs = []; sim.bufTgt = [];
+  sim.t = 0;
+  drawPendulum();
+  if (chart) {
+    chart.data.labels = []; chart.data.datasets.forEach(d => d.data = []);
+    chart.update('none');
+  }
+}
+
+function resetAll() {
+  sim.running = false;
+  sim.paused = false;
+  sim.m = randomMass();
+  refreshMass();
+  applyInitial();
+  setRunningUI();
+}
+
+function setRunningUI() {
+  const dot = $('state-dot');
+  if (sim.paused) {
+    dot.innerHTML = '<span class="paused-dot"></span>拖动中（物理冻结）';
+    $('btn-run').textContent = '▶ 恢复';
+  } else if (sim.running) {
+    dot.innerHTML = '<span class="running-dot"></span>运行中';
+    $('btn-run').textContent = '⏸ 暂停';
+  } else {
+    dot.innerHTML = '<span class="paused-dot"></span>已暂停';
+    $('btn-run').textContent = '▶ 开始';
+  }
+}
+
+$('btn-run').addEventListener('click', () => {
+  if (!chart) return;
+  if (sim.running) {
+    sim.running = false; sim.paused = false;
+  } else {
+    sim.running = true; sim.paused = false;
+  }
+  setRunningUI();
+});
+$('btn-reset').addEventListener('click', resetAll);
+$('btn-random').addEventListener('click', () => {
+  sim.m = randomMass();
+  refreshMass();
+  if (!sim.running) applyInitial();
+});
+
+function preset(i) {
+  const ps = [
+    [0, 0, 0],
+    [12, 0, 0],
+    [12, 0, 3],
+    [14, 2, 4],
+  ][i];
+  $('kp').value = ps[0]; sim.Kp = ps[0]; $('kp-val').textContent = ps[0].toFixed(2);
+  $('ki').value = ps[1]; sim.Ki = ps[1]; $('ki-val').textContent = ps[1].toFixed(2);
+  $('kd').value = ps[2]; sim.Kd = ps[2]; $('kd-val').textContent = ps[2].toFixed(2);
+}
+
+// ============ 主循环 ============
+let lastTs = null;
+function stepSim(now) {
+  // 物理推进：每次 RAF 按真实时间推进，跨过多个控制周期
+  const realDt = lastTs === null ? 0 : Math.min((now - lastTs) / 1000, 0.1);
+  lastTs = now;
+
+  if (sim.running && !sim.paused) {
+    let acc = 0;
+    let samples = [];
+    for (let t = 0; t < realDt; t += CTRL_DT) {
+      const u = pidCompute();
+      // 用带噪声的观测做反馈（先采样噪声再算 PID，模拟真实传感器）
+      sim.obsTheta = sim.theta + sim.noiseSigma * gauss();
+      // 上面 pidCompute 用的 obsTheta 是前一拍的，为了简单这里先算再更新下一拍，效果一致
+      const steps = Math.round(CTRL_DT / PHYS_DT);
+      for (let s = 0; s < steps; s++) physicalStep(u);
+      samples.push({
+        t: sim.t,
+        th: sim.theta,
+        obs: sim.obsTheta,
+        tg: sim.target
+      });
+      sim.t += CTRL_DT;
+    }
+    for (const s of samples) {
+      sim.bufT.push(s.t); sim.bufTrue.push(s.th); sim.bufObs.push(s.obs); sim.bufTgt.push(s.tg);
+    }
+    if (sim.bufT.length > MAX_POINTS) {
+      const cut = sim.bufT.length - MAX_POINTS;
+      sim.bufT.splice(0, cut); sim.bufTrue.splice(0, cut);
+      sim.bufObs.splice(0, cut); sim.bufTgt.splice(0, cut);
+    }
+    // 统计读数
+    $('s-theta').textContent = (sim.theta * 180 / Math.PI).toFixed(1) + '°';
+    $('s-obs').textContent = (sim.obsTheta * 180 / Math.PI).toFixed(1) + '°';
+    // 显示当前输出（重算一次展示用）
+    const e = sim.target - sim.obsTheta;
+    let uDisp = sim.Kp * e + sim.Ki * sim.integral + sim.Kd * (sim.hasPrev ? (e - sim.prevErr) / CTRL_DT : 0);
+    uDisp = Math.max(-sim.uMax, Math.min(sim.uMax, uDisp));
+    $('s-u').textContent = uDisp.toFixed(2);
+    drawPendulum();
+  }
+}
+
+function updateChart() {
+  if (!chart) return;
+  if (sim.bufT.length === 0) return;
+  chart.data.labels = sim.bufT.map(t => t.toFixed(2));
+  chart.data.datasets[0].data = sim.bufTrue.map(v => v * 180 / Math.PI);
+  chart.data.datasets[1].data = sim.bufObs.map(v => v * 180 / Math.PI);
+  chart.data.datasets[2].data = sim.bufTgt.map(v => v * 180 / Math.PI);
+  chart.update('none');
+}
+
+function loop(now) {
+  if (now !== undefined) stepSim(now);
+  if (chart && sim.running && !sim.paused) updateChart();
+  requestAnimationFrame(loop);
+}
+
+// 启动
+function init() {
+  refreshMass();
+  applyInitial();
+  setRunningUI();
+  // 同步 PID 显示文本与 slider 实际值
+  $('kp-val').textContent = sim.Kp.toFixed(2);
+  $('ki-val').textContent = sim.Ki.toFixed(2);
+  $('kd-val').textContent = sim.Kd.toFixed(2);
+  $('umax-val').textContent = sim.uMax + ' N·m';
+  // 支持 ?autorun 自动开始（方便调试/分享）
+  if (new URLSearchParams(location.search).get('autorun') === '1') {
+    sim.running = true;
+    setRunningUI();
+  }
+  requestAnimationFrame(loop);
+}
+init();
+</script>
+</body>
+</html>
