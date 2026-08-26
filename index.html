@@ -289,10 +289,10 @@ const LEVELS = {
     },
     pidUI() {
       return [
-        pidInput('kp', 'Kp', '比例/Proportional', 1),
-        pidInput('ki', 'Ki', '积分/Integral', 0),
-        pidInput('kd', 'Kd', '微分/Derivative', 0),
-        pidInput('umax', '限幅', '输出上限 N·m', 15),
+        pidSlider('kp', 'Kp', '比例/Proportional', 1),
+        pidSlider('ki', 'Ki', '积分/Integral', 0),
+        pidSlider('kd', 'Kd', '微分/Derivative', 0),
+        pidSlider('umax', '限幅', '输出上限 N·m', 15),
         pidInput('tf1', 'Tf', 'D 项滤波 (s)', 0),
         pidInput('tfm', 'TfM', '测量值滤波 (s)', 0),
       ];
@@ -345,10 +345,10 @@ const LEVELS = {
     },
     pidUI() {
       return [
-        pidInput('kp', 'Kp', '比例/Proportional', 1),
-        pidInput('ki', 'Ki', '积分/Integral', 0),
-        pidInput('kd', 'Kd', '微分/Derivative', 0),
-        pidInput('umax', '限幅', '输出上限 N·m', 25),
+        pidSlider('kp', 'Kp', '比例/Proportional', 1),
+        pidSlider('ki', 'Ki', '积分/Integral', 0),
+        pidSlider('kd', 'Kd', '微分/Derivative', 0),
+        pidSlider('umax', '限幅', '输出上限 N·m', 25),
         pidInput('tf1', 'Tf', 'D 项滤波 (s)', 0),
         pidInput('tfm', 'TfM', '测量值滤波 (s)', 0),
       ];
@@ -406,17 +406,17 @@ const LEVELS = {
       return {
         cols: [
           [
-            pidInput('kpth', 'Kpθ', '内环·摆角增益', 1),
-            pidInput('kith', 'Kiθ', '内环·摆角积分', 0),
-            pidInput('kdth', 'Kdθ', '内环·角速度阻尼', 0),
+            pidSlider('kpth', 'Kpθ', '内环·摆角增益', 1),
+            pidSlider('kith', 'Kiθ', '内环·摆角积分', 0),
+            pidSlider('kdth', 'Kdθ', '内环·角速度阻尼', 0),
             pidInput('tfth', 'Tfθ', '内环 D 滤波 (s)', 0),
-            pidInput('fmax', 'F限幅', '内环·推力上限 N', 30),
+            pidSlider('fmax', 'F限幅', '内环·推力上限 N', 30),
             pidInput('tfmth', 'TfMθ', '内环·角度测量滤波 (s)', 0),
           ],
           [
-            pidInput('kpx', 'Kpx', '外环·位置增益', 0),
-            pidInput('kix', 'Kix', '外环·位置积分', 0),
-            pidInput('kdx', 'Kdx', '外环·位置阻尼', 0),
+            pidSlider('kpx', 'Kpx', '外环·位置增益', 0),
+            pidSlider('kix', 'Kix', '外环·位置积分', 0),
+            pidSlider('kdx', 'Kdx', '外环·位置阻尼', 0),
             pidInput('tfx', 'TfX', '外环 D 滤波 (s)', 0),
             pidInput('threfmax', 'θref限幅', '外环·倾角上限 rad', 0.1),
             pidInput('tfmx', 'TfMX', '外环·位置测量滤波 (s)', 0),
@@ -909,6 +909,25 @@ function pidInput(id, name, sub, def) {
     }
   };
 }
+// PID 增益滑块：0-50，步进 0.1（配合 sub 显示当前值）
+function pidSlider(id, name, sub, def) {
+  return {
+    type: 'pid', id, name, sub, def,
+    render() {
+      const item = document.createElement('div');
+      item.className = 'pid-item';
+      item.innerHTML = `<div class="k">${name} <input type="range" id="${id}" min="0" max="50" step="0.1" value="${def}" style="width:120px;vertical-align:middle;accent-color:var(--accent,#4f8cff);"></div>
+        <div class="n">${sub} · <span id="${id}-val" style="font-weight:700;color:var(--blue);">${def}</span></div>`;
+      const inp = item.querySelector('input');
+      inp.addEventListener('input', (e) => {
+        const v = parseFloat(e.target.value);
+        item.querySelector('#' + id + '-val').textContent = v;
+        onInputHook(v, id);
+      });
+      return item;
+    }
+  };
+}
 // onInputHook 在 buildLevelUI 时根据关卡绑定（默认不做事）
 let onInputHook = (v, id) => {};
 
@@ -996,6 +1015,8 @@ function refreshPidUI() {
   items.forEach((p, i) => {
     const inp = $(p.id);
     if (inp) inp.value = map[i];
+    const val = $(p.id + '-val');
+    if (val) val.textContent = map[i];
   });
 }
 function updateStats() {
