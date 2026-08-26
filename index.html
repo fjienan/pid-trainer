@@ -394,6 +394,7 @@ const LEVELS = {
             pidInput('kdth', 'Kdθ', '内环·角速度阻尼', 0),
             pidInput('tfth', 'Tfθ', '内环 D 滤波 (s)', 0),
             pidInput('fmax', 'F限幅', '内环·推力上限 N', 30),
+            pidInput('tfmth', 'TfMθ', '内环·角度测量滤波 (s)', 0),
           ],
           [
             pidInput('kpx', 'Kpx', '外环·位置增益', 0),
@@ -401,12 +402,10 @@ const LEVELS = {
             pidInput('kdx', 'Kdx', '外环·位置阻尼', 0),
             pidInput('tfx', 'TfX', '外环 D 滤波 (s)', 0),
             pidInput('threfmax', 'θref限幅', '外环·倾角上限 rad', 0.1),
+            pidInput('tfmx', 'TfMX', '外环·位置测量滤波 (s)', 0),
           ],
         ],
-        extras: [
-          pidInput('tfmth', 'TfMθ', '角度测量滤波 (s)', 0),
-          pidInput('tfmx', 'TfMX', '位置测量滤波 (s)', 0),
-        ],
+        extras: [],
       };
     },
     chips() {
@@ -520,7 +519,6 @@ function initChart() {
         { label: '真值角度', data: [], borderColor: '#66d98a', borderWidth: 2, pointRadius: 0, tension: 0.2, animation: false, parsing: false },
         { label: '观测角度', data: [], borderColor: '#ffb74d', borderWidth: 1.5, pointRadius: 0, tension: 0.2, animation: false, parsing: false },
         { label: '目标角度', data: [], borderColor: '#64b5f6', borderWidth: 2, borderDash: [5, 5], pointRadius: 0, tension: 0, animation: false, parsing: false },
-        { label: '小车位置 x', data: [], borderColor: '#ff6b6b', borderWidth: 1.5, pointRadius: 0, tension: 0.2, animation: false, parsing: false, yAxisID: 'y1' },
         { label: '误差 (真值-目标)', data: [], borderColor: '#e0e0ff', borderWidth: 1.5, pointRadius: 0, tension: 0.2, animation: false, parsing: false },
         { label: '误差 (观测-目标)', data: [], borderColor: '#f8bbd0', borderWidth: 1, borderDash: [3, 3], pointRadius: 0, tension: 0.2, animation: false, parsing: false },
       ]
@@ -539,22 +537,17 @@ function initChart() {
               return v;
             }
           }
-        },
-        y1: { position: 'right', title: { display: true, text: '位置 m' }, grid: { drawOnChartArea: false } }
+        }
       },
       plugins: {
         legend: {
           position: 'bottom',
-          labels: { boxWidth: 12, padding: 6, filter: (item, data) => !(item.datasetIndex === 3 && sim.level !== 3) }
+          labels: { boxWidth: 12, padding: 6 }
         }
       }
     }
   });
-  // 图表初始化后按当前关卡同步图例（L1/L2 隐藏 x 曲线和右轴）
-  chart.data.datasets[3].hidden = (sim.level !== 3);
-  chart.options.scales.y1.display = (sim.level === 3);
-  chart.update('none');
-  // L3 小车位置独立图
+  // L3 小车位置独立图（外环），L1/L2 隐藏
   const ctxX = document.getElementById('chart-canvas-x').getContext('2d');
   chartX = new Chart(ctxX, {
     type: 'line',
@@ -562,7 +555,8 @@ function initChart() {
       datasets: [
         { label: '位置 x (真值)', data: [], borderColor: '#ff6b6b', borderWidth: 2, pointRadius: 0, tension: 0.2, animation: false, parsing: false },
         { label: '位置 x (观测)', data: [], borderColor: '#ffb74d', borderWidth: 1.5, pointRadius: 0, tension: 0.2, animation: false, parsing: false },
-        { label: '误差 x (真值)', data: [], borderColor: '#e0e0ff', borderWidth: 1.5, pointRadius: 0, tension: 0.2, animation: false, parsing: false },
+        { label: '误差 x (目标0-真值)', data: [], borderColor: '#e0e0ff', borderWidth: 1.5, pointRadius: 0, tension: 0.2, animation: false, parsing: false },
+        { label: '目标位置 x=0', data: [], borderColor: '#64b5f6', borderWidth: 2, borderDash: [5, 5], pointRadius: 0, tension: 0, animation: false, parsing: false },
       ]
     },
     options: {
@@ -904,12 +898,7 @@ function buildLevelUI() {
   // 统计
   $('stats').innerHTML = '';
   updateStats();
-  // 图表图例按关卡动态调整：L1/L2 无位置数据，隐藏 x 曲线和右轴
-  if (chart) {
-    chart.data.datasets[3].hidden = (sim.level !== 3);
-    chart.options.scales.y1.display = (sim.level === 3);
-    chart.update('none');
-  }
+  // 图表：L1/L2 隐藏第二张位置图
   if (chartX) {
     $('chart-x-wrap').style.display = (sim.level === 3) ? '' : 'none';
     chartX.update('none');
@@ -1079,41 +1068,46 @@ function updateChart() {
   chart.data.datasets[0].data = downsample(sim.bufT, sim.bufTrue.map(v => v * DEG));
   chart.data.datasets[1].data = downsample(sim.bufT, sim.bufObs.map(v => v * DEG));
   chart.data.datasets[2].data = downsample(sim.bufT, sim.bufTgt.map(v => v * DEG));
-  chart.data.datasets[3].data = downsample(sim.bufT, sim.bufX);
-  // 误差（真值-目标、观测-目标），单位 °；L2 目标随时间变化，也要逐点减
-  chart.data.datasets[4].data = downsample(sim.bufT, sim.bufTrue.map((v, i) => (v - sim.bufTgt[i]) * DEG));
-  chart.data.datasets[5].data = downsample(sim.bufT, sim.bufObs.map((v, i) => (v - sim.bufTgt[i]) * DEG));
+  chart.data.datasets[3].data = downsample(sim.bufT, sim.bufTrue.map((v, i) => (v - sim.bufTgt[i]) * DEG));
+  chart.data.datasets[4].data = downsample(sim.bufT, sim.bufObs.map((v, i) => (v - sim.bufTgt[i]) * DEG));
   chart.update('none');
   if (chartX) {
     chartX.data.datasets[0].data = downsample(sim.bufT, sim.bufX);
     chartX.data.datasets[1].data = downsample(sim.bufT, sim.bufObsX);
-    chartX.data.datasets[2].data = downsample(sim.bufT, sim.bufX); // 目标 x=0，误差即 x 本身
+    chartX.data.datasets[2].data = downsample(sim.bufT, sim.bufX);
+    chartX.data.datasets[3].data = downsample(sim.bufT, sim.bufX.map(() => 0));
     chartX.update('none');
   }
 }
 
 // ==================== 控制结果 ====================
 // 指标定义：
-//  L1/L3：5s 均方稳态误差(RMSE, t>=5s 窗口, 真值误差)、峰值误差、稳态带首次进入时间
-//  L2：转一圈的跟踪 RMSE（目标跨 360° 的窗口）
+//  L1/L3：5s 均方稳态误差(RMSE, t>=5s 窗口, 真值误差)、峰值误差、稳态带进入时间(连续3s不出带)
+//  L2：最近一整圈的跟踪 RMSE（滑动窗口，目标每跨 360° 更新一次）
 function computeResults() {
   const n = sim.bufT.length;
   if (n < 5) return null; // 数据太少
   const out = { rmse: null, peak: null, settle: null, circleRmse: null };
   if (sim.level === 2) {
-    // 目标转一圈：theta0 -> theta0 + 2π，找 bufTgt 首次累计跨过 2π 的窗口
+    // 滚动窗口：找目标角最后一个周期起点（tgt 相对首值 ≥2π 的最后一个完整圈）
     const t0 = sim.bufTgt[0];
-    let endIdx = -1;
-    for (let i = 1; i < n; i++) {
-      if (sim.bufTgt[i] - t0 >= 2 * Math.PI) { endIdx = i; break; }
+    // 全部满足 tgt[i]-t0 >= 2π 的索引中，从最后一个往前推一圈
+    let lastFullIdx = -1;
+    for (let i = n - 1; i >= 0; i--) {
+      if (sim.bufTgt[i] - t0 >= 2 * Math.PI) { lastFullIdx = i; break; }
     }
-    if (endIdx > 0) {
+    if (lastFullIdx > 0) {
+      // 从 lastFullIdx 反推该圈起点：tgt 差正好 2π 的位置
+      let startIdx = 0;
+      for (let i = lastFullIdx - 1; i >= 0; i--) {
+        if (sim.bufTgt[lastFullIdx] - sim.bufTgt[i] >= 2 * Math.PI) { startIdx = i + 1; break; }
+      }
       let s2 = 0, cnt = 0;
-      for (let i = 1; i <= endIdx; i++) {
+      for (let i = startIdx; i <= lastFullIdx; i++) {
         const e = sim.bufTrue[i] - sim.bufTgt[i];
         s2 += e * e; cnt++;
       }
-      out.circleRmse = Math.sqrt(s2 / cnt) * DEG;
+      if (cnt > 0) out.circleRmse = Math.sqrt(s2 / cnt) * DEG;
     }
     return out;
   }
@@ -1129,17 +1123,19 @@ function computeResults() {
   let pk = 0;
   for (let i = 0; i < n; i++) { const a = Math.abs(eArr[i]); if (a > pk) pk = a; }
   out.peak = pk;
-  // 稳态带首次进入时间（|e| < 阈值 且其后保持；L1 角度 2°、L3 位置 0.02m）
-  const band = (sim.level === 3) ? 0.02 : 2;
-  const N = n - 1; // 至少留末尾 1 点验证保持(简化：进入后不再出带)
+  // 稳态带进入时间：连续 3s 不出带才算进入（L1 角度 2°、L3 位置 0.05m）
+  const band = (sim.level === 3) ? 0.05 : 2;
+  const HOLD_S = 3;                       // 确认时间
+  const holdIdx = Math.round(HOLD_S / CTRL_DT);
   let settleT = null;
-  for (let i = 0; i < N; i++) {
+  outer:
+  for (let i = 0; i + holdIdx < n; i++) {  // 必须后面完整 holdIdx 样本才判定
     if (Math.abs(eArr[i]) < band) {
-      let ok = true;
-      for (let j = i; j < n; j++) {
-        if (Math.abs(eArr[j]) >= band) { ok = false; break; }
+      for (let j = i + 1; j < i + holdIdx; j++) {
+        if (Math.abs(eArr[j]) >= band) continue outer;
       }
-      if (ok) { settleT = sim.bufT[i]; break; }
+      settleT = sim.bufT[i];
+      break;
     }
   }
   out.settle = settleT;
@@ -1161,17 +1157,17 @@ function updateResult() {
   if (sim.level === 2) {
     el.innerHTML =
       `<div class="stat"><div class="v" style="color:var(--green);">${r.circleRmse === null ? '--' : r.circleRmse.toFixed(2)}°</div><div class="l">一圈跟踪 RMSE</div></div>`;
-    note.textContent = '定义：目标角度累计转过 360° 的窗口内，跟踪误差的均方根（越小越好，Ki 需要非零才能消稳定滞后）';
+    note.textContent = '定义：最近一整圈（目标角跨 360°）内跟踪误差的均方根，随仿真滚动刷新（Ki 需要非零才能消稳定滞后）';
     return;
   }
   const unit = (sim.level === 3) ? ' m' : '°';
   el.innerHTML =
     `<div class="stat"><div class="v" style="color:var(--green);">${r.rmse === null ? '--' : r.rmse.toFixed(3)}${unit}</div><div class="l">5s 均方稳态误差</div></div>` +
     `<div class="stat"><div class="v" style="color:var(--blue);">${r.peak === null ? '--' : r.peak.toFixed(3)}${unit}</div><div class="l">峰值误差</div></div>` +
-    `<div class="stat"><div class="v" style="color:var(--orange);">${r.settle === null ? '未进入' : r.settle.toFixed(2) + 's'}</div><div class="l">稳态带进入时间</div></div>`;
+    `<div class="stat"><div class="v" style="color:var(--orange);">${r.settle === null ? '未确认' : r.settle.toFixed(2) + 's'}</div><div class="l">稳态带进入时间</div></div>`;
   note.textContent = (sim.level === 3)
-    ? '稳态带：|x| < 0.02m；均方稳态误差取 t≥5s 的真值位置误差'
-    : '稳态带：|θ|<2°；均方稳态误差取 t≥5s 的真值角度误差';
+    ? '稳态带：|x| < 0.05m 且连续 3s 不出带；均方稳态误差取 t≥5s 的真值位置误差'
+    : '稳态带：|θ|<2° 且连续 3s 不出带；均方稳态误差取 t≥5s 的真值角度误差';
 }
 
 function loop(now) {
