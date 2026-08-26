@@ -198,6 +198,14 @@ window.addEventListener('load', function () {
             <h3 style="margin:0 0 6px 0; font-size:14px;">小车位置 x <span class="note" style="font-size:11px;">外环</span></h3>
             <div id="chart-x"><canvas id="chart-canvas-x"></canvas></div>
           </div>
+          <div id="chart-u-wrap" style="display:none; margin-top:14px;">
+            <h3 style="margin:0 0 6px 0; font-size:14px;">输出分解 <span class="note" style="font-size:11px;" id="chart-u-title">Kp / Ki / Kd 分量</span></h3>
+            <div id="chart-u"><canvas id="chart-canvas-u"></canvas></div>
+          </div>
+          <div id="chart-u2-wrap" style="display:none; margin-top:14px;">
+            <h3 style="margin:0 0 6px 0; font-size:14px;">外环输出分解 <span class="note" style="font-size:11px;">KpX / KiX / KdX 分量 (θref)</span></h3>
+            <div id="chart-u2"><canvas id="chart-canvas-u2"></canvas></div>
+          </div>
         </div>
       </div>
 
@@ -253,7 +261,10 @@ const sim = {
   prevEX: 0, hasPrevX: false, prevX: 0, wF: 0, xdF: 0, wF1: 0,
   obsTheta: 0, obsX: 0,
   bufT: [], bufTrue: [], bufObs: [], bufTgt: [], bufX: [], bufObsX: [],
+  bufUKp: [], bufUKi: [], bufUKd: [],   // L1/L2 输出分量（N·m）；L3 内环 F 分量（N）
+  bufUKp2: [], bufUKi2: [], bufUKd2: [], // L3 外环 θref 分量（rad）
   targetNow: 0, uNow: 0,
+  uKpNow: 0, uKiNow: 0, uKdNow: 0, uKp2Now: 0, uKi2Now: 0, uKd2Now: 0,
 };
 
 // ==================== 关卡定义 ====================
@@ -299,7 +310,10 @@ const LEVELS = {
       sim.wF1 += (CTRL_DT / (CTRL_DT + sim.Tf1)) * (((e - sim.prevErr) / CTRL_DT) - sim.wF1);
       sim.integral = clamp(sim.integral + e * CTRL_DT, -20, 20);
       sim.prevErr = e; sim.hasPrev = true;
-      return clamp(sim.Kp * e + sim.Ki * sim.integral + sim.Kd * sim.wF1, -sim.uMax, sim.uMax);
+      sim.uKpNow = sim.Kp * e;
+      sim.uKiNow = sim.Ki * sim.integral;
+      sim.uKdNow = sim.Kd * sim.wF1;
+      return clamp(sim.uKpNow + sim.uKiNow + sim.uKdNow, -sim.uMax, sim.uMax);
     },
     target(t) { return 0; },
     stats() {
@@ -352,7 +366,10 @@ const LEVELS = {
       sim.wF1 += (CTRL_DT / (CTRL_DT + sim.Tf1)) * (((e - sim.prevErr) / CTRL_DT) - sim.wF1);
       sim.integral = clamp(sim.integral + e * CTRL_DT, -20, 20);
       sim.prevErr = e; sim.hasPrev = true;
-      return clamp(sim.Kp * e + sim.Ki * sim.integral + sim.Kd * sim.wF1, -sim.uMax, sim.uMax);
+      sim.uKpNow = sim.Kp * e;
+      sim.uKiNow = sim.Ki * sim.integral;
+      sim.uKdNow = sim.Kd * sim.wF1;
+      return clamp(sim.uKpNow + sim.uKiNow + sim.uKdNow, -sim.uMax, sim.uMax);
     },
     target(t) { return sim.theta0 + sim.omegaRef * t; },
     stats() {
@@ -424,7 +441,10 @@ const LEVELS = {
       sim.xdF += (CTRL_DT / (CTRL_DT + sim.TfX)) * (((eX - sim.prevEX) / CTRL_DT) - sim.xdF);
       sim.integX = clamp(sim.integX + eX * CTRL_DT, -5, 5);
       sim.prevEX = eX; sim.hasPrevX = true;
-      const thetaRef = clamp(sim.KpX * eX + sim.KiX * sim.integX + sim.KdX * sim.xdF, -sim.thetaRefMax, sim.thetaRefMax);
+      sim.uKp2Now = sim.KpX * eX;
+      sim.uKi2Now = sim.KiX * sim.integX;
+      sim.uKd2Now = sim.KdX * sim.xdF;
+      const thetaRef = clamp(sim.uKp2Now + sim.uKi2Now + sim.uKd2Now, -sim.thetaRefMax, sim.thetaRefMax);
       sim.thetaRefNow = thetaRef;
       // 内环（D 项低通）
       const eTh = sim.obsTheta - thetaRef;
@@ -432,7 +452,10 @@ const LEVELS = {
       const dTh = sim.wF;
       sim.integTh = clamp(sim.integTh + eTh * CTRL_DT, -5, 5);
       sim.prevErr = eTh; sim.hasPrev = true;
-      return clamp(sim.KpTh * eTh + sim.KiTh * sim.integTh + sim.KdTh * dTh, -sim.fMax, sim.fMax);
+      sim.uKpNow = sim.KpTh * eTh;
+      sim.uKiNow = sim.KiTh * sim.integTh;
+      sim.uKdNow = sim.KdTh * dTh;
+      return clamp(sim.uKpNow + sim.uKiNow + sim.uKdNow, -sim.fMax, sim.fMax);
     },
     target(t) { return 0; },
     stats() {
@@ -493,7 +516,9 @@ function stepCartPole(F) {
 // 历史数据无限保留；显示时按像素数抽稀（min/max 每桶），保证任意时长不卡
 const CHART_MAX_PLOT = 1200; // 最多绘制点
 let chart = null;
-let chartX = null; // L3 小车位置独立图
+let chartX = null;   // L3 小车位置独立图
+let chartU = null;   // 输出分解图（L1/L2: Kp/Ki/Kd N·m；L3: 内环 F 分量 N）
+let chartU2 = null;  // L3 外环 θref 分量图（rad）
 function downsample(t, v) {
   if (t.length <= CHART_MAX_PLOT) return t.map((tt, i) => ({ x: tt, y: v[i] }));
   const bucket = Math.ceil(t.length / CHART_MAX_PLOT);
@@ -572,6 +597,47 @@ function initChart() {
     }
   });
   $('chart-x-wrap').style.display = (sim.level === 3) ? '' : 'none';
+  // 输出分解图（L1/L2: 一张 Kp/Ki/Kd；L3: 内环 F 一张 + 外环 θref 一张）
+  const ctxU = document.getElementById('chart-canvas-u').getContext('2d');
+  chartU = new Chart(ctxU, {
+    type: 'line',
+    data: {
+      datasets: [
+        { label: 'Kp 分量', data: [], borderColor: '#ff6b6b', borderWidth: 2, pointRadius: 0, tension: 0.2, animation: false, parsing: false },
+        { label: 'Ki 分量', data: [], borderColor: '#66d98a', borderWidth: 2, pointRadius: 0, tension: 0.2, animation: false, parsing: false },
+        { label: 'Kd 分量', data: [], borderColor: '#64b5f6', borderWidth: 2, pointRadius: 0, tension: 0.2, animation: false, parsing: false },
+      ]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      animation: false,
+      scales: {
+        x: { type: 'linear', ticks: { maxTicksLimit: 8, callback: function (v) { return v + 's'; } }, grid: { color: '#232e46' } },
+        y: { title: { display: true, text: '分量' }, grid: { color: '#232e46' }, ticks: { maxTicksLimit: 6 } },
+      },
+      plugins: { legend: { position: 'bottom', labels: { boxWidth: 12, padding: 6 } } }
+    }
+  });
+  const ctxU2 = document.getElementById('chart-canvas-u2').getContext('2d');
+  chartU2 = new Chart(ctxU2, {
+    type: 'line',
+    data: {
+      datasets: [
+        { label: 'KpX 分量 (θref)', data: [], borderColor: '#ff6b6b', borderWidth: 2, pointRadius: 0, tension: 0.2, animation: false, parsing: false },
+        { label: 'KiX 分量 (θref)', data: [], borderColor: '#66d98a', borderWidth: 2, pointRadius: 0, tension: 0.2, animation: false, parsing: false },
+        { label: 'KdX 分量 (θref)', data: [], borderColor: '#64b5f6', borderWidth: 2, pointRadius: 0, tension: 0.2, animation: false, parsing: false },
+      ]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      animation: false,
+      scales: {
+        x: { type: 'linear', ticks: { maxTicksLimit: 8, callback: function (v) { return v + 's'; } }, grid: { color: '#232e46' } },
+        y: { title: { display: true, text: 'θref (rad)' }, grid: { color: '#232e46' }, ticks: { maxTicksLimit: 6 } },
+      },
+      plugins: { legend: { position: 'bottom', labels: { boxWidth: 12, padding: 6 } } }
+    }
+  });
 }
 
 // ==================== 画布：扭矩摆 ====================
@@ -903,6 +969,19 @@ function buildLevelUI() {
     $('chart-x-wrap').style.display = (sim.level === 3) ? '' : 'none';
     chartX.update('none');
   }
+  // 输出分解图：L1/L2 一张；L3 两张（内环 F + 外环 θref）
+  if (chartU) {
+    $('chart-u-wrap').style.display = '';
+    $('chart-u-title').textContent = (sim.level === 3)
+      ? '内环 F 分量（N）'
+      : 'Kp / Ki / Kd 分量 (N·m)';
+    chartU.options.scales.y.title.text = (sim.level === 3) ? 'F (N)' : 'u (N·m)';
+    chartU.update('none');
+  }
+  if (chartU2) {
+    $('chart-u2-wrap').style.display = (sim.level === 3) ? '' : 'none';
+    chartU2.update('none');
+  }
 }
 
 function refreshPidUI() {
@@ -936,6 +1015,7 @@ function applyInitial() {
   L.init();
   sim.t = 0;
   sim.bufT = []; sim.bufTrue = []; sim.bufObs = []; sim.bufTgt = []; sim.bufX = []; sim.bufObsX = [];
+  sim.bufUKp = []; sim.bufUKi = []; sim.bufUKd = []; sim.bufUKp2 = []; sim.bufUKi2 = []; sim.bufUKd2 = [];
   sim.obsTheta = sim.theta;
   sim.obsX = sim.x;
   sim.prevX = sim.x;
@@ -1052,12 +1132,14 @@ function stepSim(now) {
       setRunningUI();
       break;
     }
-    samples.push({ t: sim.t, th: sim.theta, obs: sim.obsTheta, tg: sim.targetNow, xx: sim.x, ox: sim.obsX });
+    samples.push({ t: sim.t, th: sim.theta, obs: sim.obsTheta, tg: sim.targetNow, xx: sim.x, ox: sim.obsX, up: sim.uKpNow, ui: sim.uKiNow, ud: sim.uKdNow, up2: sim.uKp2Now, ui2: sim.uKi2Now, ud2: sim.uKd2Now });
     sim.t += CTRL_DT;
   }
   for (const s of samples) {
     sim.bufT.push(s.t); sim.bufTrue.push(s.th);
     sim.bufObs.push(s.obs); sim.bufTgt.push(s.tg); sim.bufX.push(s.xx); sim.bufObsX.push(s.ox);
+    sim.bufUKp.push(s.up); sim.bufUKi.push(s.ui); sim.bufUKd.push(s.ud);
+    sim.bufUKp2.push(s.up2); sim.bufUKi2.push(s.ui2); sim.bufUKd2.push(s.ud2);
   }
   L.draw();
   updateStats();
@@ -1077,6 +1159,18 @@ function updateChart() {
     chartX.data.datasets[2].data = downsample(sim.bufT, sim.bufX);
     chartX.data.datasets[3].data = downsample(sim.bufT, sim.bufX.map(() => 0));
     chartX.update('none');
+  }
+  if (chartU && sim.bufUKp.length) {
+    chartU.data.datasets[0].data = downsample(sim.bufT, sim.bufUKp);
+    chartU.data.datasets[1].data = downsample(sim.bufT, sim.bufUKi);
+    chartU.data.datasets[2].data = downsample(sim.bufT, sim.bufUKd);
+    chartU.update('none');
+  }
+  if (chartU2 && sim.bufUKp2.length) {
+    chartU2.data.datasets[0].data = downsample(sim.bufT, sim.bufUKp2);
+    chartU2.data.datasets[1].data = downsample(sim.bufT, sim.bufUKi2);
+    chartU2.data.datasets[2].data = downsample(sim.bufT, sim.bufUKd2);
+    chartU2.update('none');
   }
 }
 
