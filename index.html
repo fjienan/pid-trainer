@@ -174,8 +174,8 @@ window.addEventListener('load', function () {
       <!-- 移动端选项卡（桌面端自动隐藏，三块并排） -->
       <div class="mobile-tabs">
         <button class="mtab active" data-tab="pid">PID 参数</button>
-        <button class="mtab" data-tab="setup">系统参数</button>
         <button class="mtab" data-tab="chart">图表</button>
+        <button class="mtab" data-tab="result">控制结果</button>
       </div>
 
       <!-- PID 参数 -->
@@ -187,15 +187,6 @@ window.addEventListener('load', function () {
         </div>
       </div>
 
-      <!-- 工况设置 -->
-      <div class="tab-panel" id="tab-setup">
-        <div class="card">
-          <h2>工况设置</h2>
-          <div id="setup-rows"></div>
-          <p class="note" id="setup-note" style="margin-top:10px;"></p>
-        </div>
-      </div>
-
       <!-- 图表 -->
       <div class="tab-panel" id="tab-chart">
         <div class="card">
@@ -203,6 +194,19 @@ window.addEventListener('load', function () {
           <div class="stat-grid" style="margin-bottom:12px;" id="stats"></div>
           <div id="chart"><canvas id="chart-canvas"></canvas></div>
           <div id="chart-note" class="note" style="margin-top:6px;">曲线窗口：最近 5 秒 @50Hz 采样</div>
+          <div id="chart-x-wrap" style="display:none; margin-top:14px;">
+            <h3 style="margin:0 0 6px 0; font-size:14px;">小车位置 x <span class="note" style="font-size:11px;">外环</span></h3>
+            <div id="chart-x"><canvas id="chart-canvas-x"></canvas></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 控制结果 -->
+      <div class="tab-panel" id="tab-result">
+        <div class="card">
+          <h2>控制结果</h2>
+          <div class="stat-grid" style="margin-bottom:12px;" id="result-stats"></div>
+          <p class="note" id="result-note" style="margin-top:6px;"></p>
         </div>
       </div>
     </div>
@@ -221,7 +225,7 @@ const sim = {
   running: false, paused: false, dragging: false,
   t: 0,
   // 第一/二关（扭矩摆）
-  m: 1.2, L: 0.5, b: 0.06,
+  m: 1.2, L: 1.0, b: 0.06,
   theta: 0, omega: 0,
   theta0: 30 * Math.PI / 180,
   omegaRef: 0.6,        // 第二关转速 rad/s
@@ -237,18 +241,18 @@ const sim = {
   // 控制器（出题默认：P1 I0 D0，让同学自己探索）
   Kp: 1, Ki: 0, Kd: 0, uMax: 15,
   Tf1: 0,                // L1/L2 D 项一阶低通时间常数（s），0=不滤波
-  KpTh: 1, KiTh: 0, KdTh: 0, KpX: 0, KiX: 0, KdX: 0, fMax: 30,
+  KpTh: 1, KiTh: 0, KdTh: 0, KpX: 0, KiX: 0, KdX: 0, fMax: 30, thetaRefMax: 0.1,
   TfTh: 0,               // 内环 D 项一阶低通时间常数（s），0=不滤波
   TfX: 0,                // 外环 D 项一阶低通时间常数（s），0=不滤波
   measTfTh: 0,           // 角度观测总低通（s），0=不滤波
   measTfX: 0,            // 位置观测总低通（s），0=不滤波
-  noiseSigma: 0.025,     // L1/L2 观测噪声 σ (rad)
-  noiseSigmaTh: 0.025,   // L3 角度观测噪声 σ (rad)
+  noiseSigma: 0.0125,    // L1/L2 观测噪声 σ (rad)
+  noiseSigmaTh: 0.0125,  // L3 角度观测噪声 σ (rad)
   noiseSigmaX: 0.01,     // L3 位置观测噪声 σ (m)
   integral: 0, prevErr: 0, hasPrev: false,
   prevEX: 0, hasPrevX: false, prevX: 0, wF: 0, xdF: 0, wF1: 0,
   obsTheta: 0, obsX: 0,
-  bufT: [], bufTrue: [], bufObs: [], bufTgt: [], bufX: [],
+  bufT: [], bufTrue: [], bufObs: [], bufTgt: [], bufX: [], bufObsX: [],
   targetNow: 0, uNow: 0,
 };
 
@@ -381,26 +385,37 @@ const LEVELS = {
       ];
     },
     pidUI() {
-      return [
-        pidInput('kpth', 'Kpθ', '内环·摆角增益', 1),
-        pidInput('kith', 'Kiθ', '内环·摆角积分', 0),
-        pidInput('kdth', 'Kdθ', '内环·角速度阻尼', 0),
-        pidInput('tfth', 'Tfθ', '内环 D 滤波 (s)', 0),
-        pidInput('kpx', 'Kpx', '外环·位置增益', 0),
-        pidInput('kix', 'Kix', '外环·位置积分', 0),
-        pidInput('kdx', 'Kdx', '外环·位置阻尼', 0),
-        pidInput('tfx', 'TfX', '外环 D 滤波 (s)', 0),
-        pidInput('tfmth', 'TfMθ', '角度测量滤波 (s)', 0),
-        pidInput('tfmx', 'TfMX', '位置测量滤波 (s)', 0),
-      ];
+      // 左列：内环（摆角 θ）  右列：外环（小车位置 x）
+      return {
+        cols: [
+          [
+            pidInput('kpth', 'Kpθ', '内环·摆角增益', 1),
+            pidInput('kith', 'Kiθ', '内环·摆角积分', 0),
+            pidInput('kdth', 'Kdθ', '内环·角速度阻尼', 0),
+            pidInput('tfth', 'Tfθ', '内环 D 滤波 (s)', 0),
+            pidInput('fmax', 'F限幅', '内环·推力上限 N', 30),
+          ],
+          [
+            pidInput('kpx', 'Kpx', '外环·位置增益', 0),
+            pidInput('kix', 'Kix', '外环·位置积分', 0),
+            pidInput('kdx', 'Kdx', '外环·位置阻尼', 0),
+            pidInput('tfx', 'TfX', '外环 D 滤波 (s)', 0),
+            pidInput('threfmax', 'θref限幅', '外环·倾角上限 rad', 0.1),
+          ],
+        ],
+        extras: [
+          pidInput('tfmth', 'TfMθ', '角度测量滤波 (s)', 0),
+          pidInput('tfmx', 'TfMX', '位置测量滤波 (s)', 0),
+        ],
+      };
     },
     chips() {
       return [
-        ['P1 I0 D0（出题默认）', [1, 0, 0, 0, 0, 0, 0, 0, 0, 0]],
+        ['P1 I0 D0（出题默认）', [1, 0, 0, 0, 30, 0, 0, 0, 0, 0.1, 0, 0]],
       ];
     },
-    pidDefaults() { return [1, 0, 0, 0, 0, 0, 0, 0, 0, 0]; },
-    pidApply(v) { sim.KpTh = v[0]; sim.KiTh = v[1]; sim.KdTh = v[2]; sim.TfTh = v[3]; sim.KpX = v[4]; sim.KiX = v[5]; sim.KdX = v[6]; sim.TfX = v[7]; sim.measTfTh = v[8]; sim.measTfX = v[9]; },
+    pidDefaults() { return [1, 0, 0, 0, 30, 0, 0, 0, 0, 0.1, 0, 0]; },
+    pidApply(v) { sim.KpTh = v[0]; sim.KiTh = v[1]; sim.KdTh = v[2]; sim.TfTh = v[3]; sim.fMax = v[4]; sim.KpX = v[5]; sim.KiX = v[6]; sim.KdX = v[7]; sim.TfX = v[8]; sim.thetaRefMax = v[9]; sim.measTfTh = v[10]; sim.measTfX = v[11]; },
     ctrl() {
       // 标准串级 PID：
       // 外环：e_x = 0 - x → PID → θref（限幅 ±0.1 rad 预倾，避免内环被拉离稳定域）
@@ -410,7 +425,7 @@ const LEVELS = {
       sim.xdF += (CTRL_DT / (CTRL_DT + sim.TfX)) * (((eX - sim.prevEX) / CTRL_DT) - sim.xdF);
       sim.integX = clamp(sim.integX + eX * CTRL_DT, -5, 5);
       sim.prevEX = eX; sim.hasPrevX = true;
-      const thetaRef = clamp(sim.KpX * eX + sim.KiX * sim.integX + sim.KdX * sim.xdF, -0.1, 0.1);
+      const thetaRef = clamp(sim.KpX * eX + sim.KiX * sim.integX + sim.KdX * sim.xdF, -sim.thetaRefMax, sim.thetaRefMax);
       sim.thetaRefNow = thetaRef;
       // 内环（D 项低通）
       const eTh = sim.obsTheta - thetaRef;
@@ -479,6 +494,7 @@ function stepCartPole(F) {
 // 历史数据无限保留；显示时按像素数抽稀（min/max 每桶），保证任意时长不卡
 const CHART_MAX_PLOT = 1200; // 最多绘制点
 let chart = null;
+let chartX = null; // L3 小车位置独立图
 function downsample(t, v) {
   if (t.length <= CHART_MAX_PLOT) return t.map((tt, i) => ({ x: tt, y: v[i] }));
   const bucket = Math.ceil(t.length / CHART_MAX_PLOT);
@@ -505,6 +521,8 @@ function initChart() {
         { label: '观测角度', data: [], borderColor: '#ffb74d', borderWidth: 1.5, pointRadius: 0, tension: 0.2, animation: false, parsing: false },
         { label: '目标角度', data: [], borderColor: '#64b5f6', borderWidth: 2, borderDash: [5, 5], pointRadius: 0, tension: 0, animation: false, parsing: false },
         { label: '小车位置 x', data: [], borderColor: '#ff6b6b', borderWidth: 1.5, pointRadius: 0, tension: 0.2, animation: false, parsing: false, yAxisID: 'y1' },
+        { label: '误差 (真值-目标)', data: [], borderColor: '#e0e0ff', borderWidth: 1.5, pointRadius: 0, tension: 0.2, animation: false, parsing: false },
+        { label: '误差 (观测-目标)', data: [], borderColor: '#f8bbd0', borderWidth: 1, borderDash: [3, 3], pointRadius: 0, tension: 0.2, animation: false, parsing: false },
       ]
     },
     options: {
@@ -536,6 +554,30 @@ function initChart() {
   chart.data.datasets[3].hidden = (sim.level !== 3);
   chart.options.scales.y1.display = (sim.level === 3);
   chart.update('none');
+  // L3 小车位置独立图
+  const ctxX = document.getElementById('chart-canvas-x').getContext('2d');
+  chartX = new Chart(ctxX, {
+    type: 'line',
+    data: {
+      datasets: [
+        { label: '位置 x (真值)', data: [], borderColor: '#ff6b6b', borderWidth: 2, pointRadius: 0, tension: 0.2, animation: false, parsing: false },
+        { label: '位置 x (观测)', data: [], borderColor: '#ffb74d', borderWidth: 1.5, pointRadius: 0, tension: 0.2, animation: false, parsing: false },
+        { label: '误差 x (真值)', data: [], borderColor: '#e0e0ff', borderWidth: 1.5, pointRadius: 0, tension: 0.2, animation: false, parsing: false },
+      ]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      animation: false,
+      scales: {
+        x: { type: 'linear', ticks: { maxTicksLimit: 8, callback: function (v) { return v + 's'; } }, grid: { color: '#232e46' } },
+        y: { title: { display: true, text: '位置 m' }, grid: { color: '#232e46' }, ticks: { maxTicksLimit: 6 } },
+      },
+      plugins: {
+        legend: { position: 'bottom', labels: { boxWidth: 12, padding: 6 } }
+      }
+    }
+  });
+  $('chart-x-wrap').style.display = (sim.level === 3) ? '' : 'none';
 }
 
 // ==================== 画布：扭矩摆 ====================
@@ -819,12 +861,32 @@ function buildLevelUI() {
   const inputMap = {
     1: { kp: v => sim.Kp = v, ki: v => sim.Ki = v, kd: v => sim.Kd = v, umax: v => sim.uMax = v, tf1: v => sim.Tf1 = v, tfm: v => sim.measTfTh = v },
     2: { kp: v => sim.Kp = v, ki: v => sim.Ki = v, kd: v => sim.Kd = v, umax: v => sim.uMax = v, tf1: v => sim.Tf1 = v, tfm: v => sim.measTfTh = v },
-    3: { kpth: v => sim.KpTh = v, kith: v => sim.KiTh = v, kdth: v => sim.KdTh = v, tfth: v => sim.TfTh = v,
-         kpx: v => sim.KpX = v, kix: v => sim.KiX = v, kdx: v => sim.KdX = v, tfx: v => sim.TfX = v,
+    3: { kpth: v => sim.KpTh = v, kith: v => sim.KiTh = v, kdth: v => sim.KdTh = v, tfth: v => sim.TfTh = v, fmax: v => sim.fMax = v,
+         kpx: v => sim.KpX = v, kix: v => sim.KiX = v, kdx: v => sim.KdX = v, tfx: v => sim.TfX = v, threfmax: v => sim.thetaRefMax = v,
          tfmth: v => sim.measTfTh = v, tfmx: v => sim.measTfX = v },
   };
   onInputHook = (v, id) => { const f = inputMap[sim.level][id]; if (f) f(v); };
-  L.pidUI().forEach(p => grid.appendChild(p.render()));
+  const ui = L.pidUI();
+  if (Array.isArray(ui)) {
+    ui.forEach(p => grid.appendChild(p.render()));
+  } else {
+    // L3：两列 + 底部 extras
+    const wrap = document.createElement('div');
+    wrap.style.cssText = 'display:grid;grid-template-columns:1fr 1fr;gap:8px 18px;';
+    ui.cols.forEach(col => {
+      const colDiv = document.createElement('div');
+      colDiv.style.cssText = 'display:flex;flex-direction:column;gap:8px;';
+      col.forEach(p => colDiv.appendChild(p.render()));
+      wrap.appendChild(colDiv);
+    });
+    grid.appendChild(wrap);
+    if (ui.extras && ui.extras.length) {
+      const extraDiv = document.createElement('div');
+      extraDiv.style.cssText = 'display:flex;flex-direction:column;gap:8px;margin-top:10px;';
+      ui.extras.forEach(p => extraDiv.appendChild(p.render()));
+      grid.appendChild(extraDiv);
+    }
+  }
   $('ctrl-name').textContent = L.name;
   // chips
   const chips = $('chips');
@@ -838,11 +900,6 @@ function buildLevelUI() {
     });
     chips.appendChild(c);
   });
-  // 工况
-  const rows = $('setup-rows');
-  rows.innerHTML = '';
-  L.setupRows().forEach(r => rows.appendChild(r.render()));
-  $('setup-note').textContent = L.desc;
   $('drag-hint').textContent = L.dragHint;
   // 统计
   $('stats').innerHTML = '';
@@ -853,6 +910,10 @@ function buildLevelUI() {
     chart.options.scales.y1.display = (sim.level === 3);
     chart.update('none');
   }
+  if (chartX) {
+    $('chart-x-wrap').style.display = (sim.level === 3) ? '' : 'none';
+    chartX.update('none');
+  }
 }
 
 function refreshPidUI() {
@@ -860,9 +921,11 @@ function refreshPidUI() {
   const map = {
     1: [sim.Kp, sim.Ki, sim.Kd, sim.uMax, sim.Tf1, sim.measTfTh],
     2: [sim.Kp, sim.Ki, sim.Kd, sim.uMax, sim.Tf1, sim.measTfTh],
-    3: [sim.KpTh, sim.KiTh, sim.KdTh, sim.TfTh, sim.KpX, sim.KiX, sim.KdX, sim.TfX, sim.measTfTh, sim.measTfX],
+    3: [sim.KpTh, sim.KiTh, sim.KdTh, sim.TfTh, sim.fMax, sim.KpX, sim.KiX, sim.KdX, sim.TfX, sim.thetaRefMax, sim.measTfTh, sim.measTfX],
   }[sim.level];
-  L.pidUI().forEach((p, i) => {
+  const ui = L.pidUI();
+  const items = Array.isArray(ui) ? ui : [...ui.cols[0], ...ui.cols[1], ...(ui.extras || [])];
+  items.forEach((p, i) => {
     const inp = $(p.id);
     if (inp) inp.value = map[i];
   });
@@ -873,16 +936,7 @@ function updateStats() {
     `<div class="stat"><div class="v" style="color:${color};">${val}</div><div class="l">${name}</div></div>`).join('');
 }
 function refreshMass() {
-  // 静态行更新
-  document.querySelectorAll('.row span.val').forEach(s => {
-    const id = s.id;
-    if (id && id.startsWith('static-')) {
-      const label = id.replace('static-', '');
-      const L = LEVELS[sim.level];
-      const r = L.setupRows().find(x => x.label === label);
-      if (r && r.getter) s.textContent = r.getter();
-    }
-  });
+  // 系统参数选项卡已移除：无静态行容器，画面标注由主循环 draw 更新
 }
 
 // ==================== 控制与主循环 ====================
@@ -892,7 +946,7 @@ function applyInitial() {
   sim.failed = false;
   L.init();
   sim.t = 0;
-  sim.bufT = []; sim.bufTrue = []; sim.bufObs = []; sim.bufTgt = []; sim.bufX = [];
+  sim.bufT = []; sim.bufTrue = []; sim.bufObs = []; sim.bufTgt = []; sim.bufX = []; sim.bufObsX = [];
   sim.obsTheta = sim.theta;
   sim.obsX = sim.x;
   sim.prevX = sim.x;
@@ -1009,12 +1063,12 @@ function stepSim(now) {
       setRunningUI();
       break;
     }
-    samples.push({ t: sim.t, th: sim.theta, obs: sim.obsTheta, tg: sim.targetNow, xx: sim.x });
+    samples.push({ t: sim.t, th: sim.theta, obs: sim.obsTheta, tg: sim.targetNow, xx: sim.x, ox: sim.obsX });
     sim.t += CTRL_DT;
   }
   for (const s of samples) {
     sim.bufT.push(s.t); sim.bufTrue.push(s.th);
-    sim.bufObs.push(s.obs); sim.bufTgt.push(s.tg); sim.bufX.push(s.xx);
+    sim.bufObs.push(s.obs); sim.bufTgt.push(s.tg); sim.bufX.push(s.xx); sim.bufObsX.push(s.ox);
   }
   L.draw();
   updateStats();
@@ -1026,12 +1080,104 @@ function updateChart() {
   chart.data.datasets[1].data = downsample(sim.bufT, sim.bufObs.map(v => v * DEG));
   chart.data.datasets[2].data = downsample(sim.bufT, sim.bufTgt.map(v => v * DEG));
   chart.data.datasets[3].data = downsample(sim.bufT, sim.bufX);
+  // 误差（真值-目标、观测-目标），单位 °；L2 目标随时间变化，也要逐点减
+  chart.data.datasets[4].data = downsample(sim.bufT, sim.bufTrue.map((v, i) => (v - sim.bufTgt[i]) * DEG));
+  chart.data.datasets[5].data = downsample(sim.bufT, sim.bufObs.map((v, i) => (v - sim.bufTgt[i]) * DEG));
   chart.update('none');
+  if (chartX) {
+    chartX.data.datasets[0].data = downsample(sim.bufT, sim.bufX);
+    chartX.data.datasets[1].data = downsample(sim.bufT, sim.bufObsX);
+    chartX.data.datasets[2].data = downsample(sim.bufT, sim.bufX); // 目标 x=0，误差即 x 本身
+    chartX.update('none');
+  }
+}
+
+// ==================== 控制结果 ====================
+// 指标定义：
+//  L1/L3：5s 均方稳态误差(RMSE, t>=5s 窗口, 真值误差)、峰值误差、稳态带首次进入时间
+//  L2：转一圈的跟踪 RMSE（目标跨 360° 的窗口）
+function computeResults() {
+  const n = sim.bufT.length;
+  if (n < 5) return null; // 数据太少
+  const out = { rmse: null, peak: null, settle: null, circleRmse: null };
+  if (sim.level === 2) {
+    // 目标转一圈：theta0 -> theta0 + 2π，找 bufTgt 首次累计跨过 2π 的窗口
+    const t0 = sim.bufTgt[0];
+    let endIdx = -1;
+    for (let i = 1; i < n; i++) {
+      if (sim.bufTgt[i] - t0 >= 2 * Math.PI) { endIdx = i; break; }
+    }
+    if (endIdx > 0) {
+      let s2 = 0, cnt = 0;
+      for (let i = 1; i <= endIdx; i++) {
+        const e = sim.bufTrue[i] - sim.bufTgt[i];
+        s2 += e * e; cnt++;
+      }
+      out.circleRmse = Math.sqrt(s2 / cnt) * DEG;
+    }
+    return out;
+  }
+  // L1/L3：真值误差（L3 用位置误差 x-0）
+  const eArr = sim.bufTrue.map((v, i) => (v - sim.bufTgt[i]) * (sim.level === 3 ? 1 : DEG));
+  // RMSE（t>=5s）
+  let s2 = 0, cnt = 0;
+  for (let i = 0; i < n; i++) {
+    if (sim.bufT[i] >= 5) { s2 += eArr[i] * eArr[i]; cnt++; }
+  }
+  if (cnt > 0) out.rmse = Math.sqrt(s2 / cnt);
+  // 峰值误差
+  let pk = 0;
+  for (let i = 0; i < n; i++) { const a = Math.abs(eArr[i]); if (a > pk) pk = a; }
+  out.peak = pk;
+  // 稳态带首次进入时间（|e| < 阈值 且其后保持；L1 角度 2°、L3 位置 0.02m）
+  const band = (sim.level === 3) ? 0.02 : 2;
+  const N = n - 1; // 至少留末尾 1 点验证保持(简化：进入后不再出带)
+  let settleT = null;
+  for (let i = 0; i < N; i++) {
+    if (Math.abs(eArr[i]) < band) {
+      let ok = true;
+      for (let j = i; j < n; j++) {
+        if (Math.abs(eArr[j]) >= band) { ok = false; break; }
+      }
+      if (ok) { settleT = sim.bufT[i]; break; }
+    }
+  }
+  out.settle = settleT;
+  return out;
+}
+let lastResultUpdate = 0;
+function updateResult() {
+  const now = performance.now();
+  if (now - lastResultUpdate < 500) return; // 0.5s 刷新一次
+  lastResultUpdate = now;
+  const r = computeResults();
+  const el = $('result-stats');
+  const note = $('result-note');
+  if (!r) {
+    el.innerHTML = `<div class="stat"><div class="v" style="color:var(--muted);">--</div><div class="l">等待数据</div></div>`;
+    note.textContent = '仿真运行几秒后显示';
+    return;
+  }
+  if (sim.level === 2) {
+    el.innerHTML =
+      `<div class="stat"><div class="v" style="color:var(--green);">${r.circleRmse === null ? '--' : r.circleRmse.toFixed(2)}°</div><div class="l">一圈跟踪 RMSE</div></div>`;
+    note.textContent = '定义：目标角度累计转过 360° 的窗口内，跟踪误差的均方根（越小越好，Ki 需要非零才能消稳定滞后）';
+    return;
+  }
+  const unit = (sim.level === 3) ? ' m' : '°';
+  el.innerHTML =
+    `<div class="stat"><div class="v" style="color:var(--green);">${r.rmse === null ? '--' : r.rmse.toFixed(3)}${unit}</div><div class="l">5s 均方稳态误差</div></div>` +
+    `<div class="stat"><div class="v" style="color:var(--blue);">${r.peak === null ? '--' : r.peak.toFixed(3)}${unit}</div><div class="l">峰值误差</div></div>` +
+    `<div class="stat"><div class="v" style="color:var(--orange);">${r.settle === null ? '未进入' : r.settle.toFixed(2) + 's'}</div><div class="l">稳态带进入时间</div></div>`;
+  note.textContent = (sim.level === 3)
+    ? '稳态带：|x| < 0.02m；均方稳态误差取 t≥5s 的真值位置误差'
+    : '稳态带：|θ|<2°；均方稳态误差取 t≥5s 的真值角度误差';
 }
 
 function loop(now) {
   if (now !== undefined) stepSim(now);
   if (chart) updateChart();
+  updateResult();
   requestAnimationFrame(loop);
 }
 
@@ -1052,7 +1198,7 @@ function init() {
   }
   if (params.get('preset') === 'ref' && sim.level === 3) {
     // 调试用：填入 L3 已验证参数（不影响同学探索界面）
-    LEVELS[3].pidApply([120, 0, 18, 0.05, 0.08, 0, 0.08, 0.05, 0.05, 0.02]);
+    LEVELS[3].pidApply([120, 0, 18, 0.05, 30, 0.08, 0, 0.08, 0.05, 0.1, 0.05, 0.02]);
     refreshPidUI();
   }
   if (params.get('autorun') === '1') {
