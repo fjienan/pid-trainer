@@ -666,9 +666,9 @@ function drawPendulum(mode) {
     ctx.beginPath(); ctx.moveTo(PIVOT.x, PIVOT.y); ctx.lineTo(tgx, tgy); ctx.stroke();
     ctx.fillStyle = '#64b5f6';
     ctx.beginPath(); ctx.arc(tgx, tgy, 5, 0, 2 * Math.PI); ctx.fill();
-    // 轨迹点
+    // 轨迹点（只画最近 5 秒 = 250 点，全量遍历会越跑越卡）
     ctx.fillStyle = 'rgba(100,181,246,.25)';
-    for (let i = 0; i < sim.bufT.length; i += 5) {
+    for (let i = Math.max(0, Math.floor((sim.bufT.length - 250) / 5) * 5); i < sim.bufT.length; i += 5) {
       const px = PIVOT.x + Lpx * Math.sin(sim.bufTrue[i]);
       const py = PIVOT.y - Lpx * Math.cos(sim.bufTrue[i]);
       ctx.beginPath(); ctx.arc(px, py, 2, 0, 2 * Math.PI); ctx.fill();
@@ -897,9 +897,16 @@ function pidInput(id, name, sub, def) {
       item.innerHTML = `<div class="k">${name} <input type="number" inputmode="decimal" id="${id}" value="${def}" step="any" style="width:76px;background:var(--panel);border:1px solid #33405e;color:var(--text);border-radius:6px;padding:4px 6px;font-size:16px;font-weight:700;"></div>
         <div class="n">${sub}</div>`;
       const inp = item.querySelector('input');
+      // 限幅类参数（umax/fmax/threfmax）设上限，防止力气无穷大
+      const LIMITS = { umax: [1, 100], fmax: [1, 100], threfmax: [0.01, 0.5] };
       inp.addEventListener('input', (e) => {
         const v = parseFloat(e.target.value);
-        if (!isNaN(v)) onInputHook(v, id);
+        if (!isNaN(v)) {
+          const lim = LIMITS[id];
+          const vv = lim ? clamp(v, lim[0], lim[1]) : v;
+          if (lim && vv !== v) e.target.value = vv;
+          onInputHook(vv, id);
+        }
       });
       // 回车失去焦点：手机键盘确认后输入框自动收起，无需点空白处
       inp.addEventListener('keydown', (e) => {
@@ -998,7 +1005,11 @@ function refreshPidUI() {
     if (inp) inp.value = map[i];
   });
 }
-function updateStats() {
+let lastStatsUpdate = 0;
+function updateStats(now) {
+  // 节流：统计数字 10Hz 刷新足够，避免每帧重建 DOM
+  if (now !== undefined && now - lastStatsUpdate < 100) return;
+  lastStatsUpdate = now === undefined ? performance.now() : now;
   const items = LEVELS[sim.level].stats();
   $('stats').innerHTML = items.map(([name, val, color]) =>
     `<div class="stat"><div class="v" style="color:${color};">${val}</div><div class="l">${name}</div></div>`).join('');
@@ -1142,11 +1153,15 @@ function stepSim(now) {
     sim.bufUKp2.push(s.up2); sim.bufUKi2.push(s.ui2); sim.bufUKd2.push(s.ud2);
   }
   L.draw();
-  updateStats();
+  updateStats(performance.now());
 }
 
-function updateChart() {
+let lastChartUpdate = 0;
+function updateChart(now) {
   if (!chart || sim.bufT.length === 0) return;
+  // 节流：图表 4Hz 刷新足够，避免 60fps 全量 downsample
+  if (now !== undefined && now - lastChartUpdate < 250) return;
+  lastChartUpdate = now === undefined ? performance.now() : now;
   chart.data.datasets[0].data = downsample(sim.bufT, sim.bufTrue.map(v => v * DEG));
   chart.data.datasets[1].data = downsample(sim.bufT, sim.bufObs.map(v => v * DEG));
   chart.data.datasets[2].data = downsample(sim.bufT, sim.bufTgt.map(v => v * DEG));
@@ -1266,7 +1281,7 @@ function updateResult() {
 
 function loop(now) {
   if (now !== undefined) stepSim(now);
-  if (chart) updateChart();
+  if (chart) updateChart(now);
   updateResult();
   requestAnimationFrame(loop);
 }
