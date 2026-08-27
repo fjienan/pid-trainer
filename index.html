@@ -841,7 +841,17 @@ cv.addEventListener('pointermove', (e) => {
       drawCartPole();
     }
   } else if (sim.dragging === 'ball') {
-    sim.theta = clamp(angleFrom(canvasPoint(e), PIVOT.x, PIVOT.y), -Math.PI, Math.PI);
+    // 拖动角度映射为「与当前连续角度最接近的等价角度」：
+    // 物理上 theta 可超 ±π（第二关转圈连续递增），而 angleFrom 只返回 [-π,π]，
+    // 若直接钳位会造成误认为 0°/360° 的巨大误差（如 450° → 90°，错 360°）。
+    // 先把拖到的小角度解算为原角度，再通过 mod 对齐到当前 theta 的最近连续值。
+    const dragA = angleFrom(canvasPoint(e), PIVOT.x, PIVOT.y); // [-π, π]
+    // 当前连续角度
+    const cur = sim.theta;
+    // 计算 cur ± 2π*k 中与 dragA 最接近的角度（等价于把差 mod 到 [-π, π]）
+    const diff = dragA - cur;
+    const wrappedDiff = ((diff + Math.PI) % (2 * Math.PI) + 2 * Math.PI) % (2 * Math.PI) - Math.PI;
+    sim.theta = cur + wrappedDiff;
     sim.omega = 0;
     drawPendulum(sim.level === 2 ? 2 : 0);
   }
