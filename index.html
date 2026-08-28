@@ -907,21 +907,23 @@ function pidInput(id, name, sub, def) {
       item.innerHTML = `<div class="k">${name} <input type="number" inputmode="decimal" id="${id}" value="${def}" step="any" style="width:76px;background:var(--panel);border:1px solid #33405e;color:var(--text);border-radius:6px;padding:4px 6px;font-size:16px;font-weight:700;"></div>
         <div class="n">${sub}</div>`;
       const inp = item.querySelector('input');
-      // 限幅类参数（umax/fmax/threfmax）设上限，防止力气无穷大
+      // 数值生效 + 限幅都在失去焦点（回车/点别处）后执行，避免输入过程中实时改参数
       const LIMITS = { umax: [1, 100], fmax: [1, 100], threfmax: [0.01, 0.5] };
-      inp.addEventListener('input', (e) => {
-        const v = parseFloat(e.target.value);
-        if (!isNaN(v)) {
-          const lim = LIMITS[id];
-          const vv = lim ? clamp(v, lim[0], lim[1]) : v;
-          if (lim && vv !== v) e.target.value = vv;
-          onInputHook(vv, id);
-        }
-      });
-      // 回车失去焦点：手机键盘确认后输入框自动收起，无需点空白处
+      let lastApplied = def;   // 最近一次生效值（用于非法输入时回显）
+      const applyValue = () => {
+        const v = parseFloat(inp.value);
+        if (isNaN(v)) { inp.value = lastApplied; return; }  // 非法输入：恢复上次生效值
+        const lim = LIMITS[id];
+        const vv = lim ? clamp(v, lim[0], lim[1]) : v;
+        if (lim && vv !== v) inp.value = vv;                // 越界：clamp 回写
+        lastApplied = vv;
+        onInputHook(vv, id);
+      };
+      // 回车＝提交并失焦
       inp.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter') inp.blur();
+        if (e.key === 'Enter') { e.preventDefault(); inp.blur(); }
       });
+      inp.addEventListener('blur', applyValue);
       return item;
     }
   };
