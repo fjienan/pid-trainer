@@ -156,6 +156,7 @@ window.addEventListener('load', function () {
         <button class="level-btn active" data-lvl="1">第一关 · 扭矩摆立起来<small>枢轴电机扭矩直控 · 目标 0°</small></button>
         <button class="level-btn" data-lvl="2">第二关 · 末端转圈<small>目标角度匀速旋转 · 跟踪圆形轨迹</small></button>
         <button class="level-btn" data-lvl="3">第三关 · Cart-Pole 回原点<small>小车水平力平衡摆杆 · 位置也要回零</small></button>
+        <button class="level-btn" data-lvl="4">第四关 · 弹簧摆稳定<small>摆杆换弹簧 · 结构刚度不足的挑战</small></button>
       </div>
 
       <div class="card" id="pendulum-wrap">
@@ -237,7 +238,7 @@ const sim = {
   theta: 0, omega: 0,
   theta0: 30 * Math.PI / 180,
   omegaRef: 0.6,        // 第二关转速 rad/s
-  // 第三关（cart-pole）
+  // 第三/四关（cart-pole / 弹簧摆）
   M: 1.5,                // 小车质量（固定）
   pc_m: 0.5,             // 摆杆质量（随机）
   pc_L: 0.6,             // 摆杆半长（质心距离）
@@ -246,6 +247,12 @@ const sim = {
   theta0L3: 5 * Math.PI / 180,
   trackMax: 5,           // 轨道半长 ±5m，碰边失败
   failed: false,         // 碰边失败标志（暂停等待重置）
+  // 第四关弹簧参数
+  springK: 80,           // 弹簧刚度 N/m（默认稍大：可见晃动但不至于完全撑不住）
+  springB: 0.5,          // 弹簧内阻尼（结构损耗）
+  springAng: 0,          // 弹簧弹性长度变化 δ (m)
+  springVel: 0,          // 弹簧伸缩速度 δ̇ (m/s)
+  pendulumB: 0.3,        // 摆角阻尼（空气/摩擦）
   // 控制器（出题默认：P1 I0 D0，让同学自己探索）
   Kp: 1, Ki: 0, Kd: 0, uMax: 15,
   Tf1: 0,                // L1/L2 D 项一阶低通时间常数（s），0=不滤波
@@ -466,6 +473,91 @@ const LEVELS = {
     dragHint: '拖摆球改摆角，拖小车改位置（松手恢复动力学）',
     chartX: true,
   },
+  4: {
+    name: '弹簧摆 · 结构刚度的挑战',
+    desc: '模拟机械组同学做的机构强度不足：摆杆变成一根弹簧，控制时结构会抖。刚度 k 稍大（80 N/m），能感受到弹性晃动。双环结构和第三关一样：外环控制小车位置，内环保住弹簧摆。',
+    init() {
+      sim.pc_m = randomMass(0.3, 1.0);
+      sim.theta = sim.theta0L3; sim.omega = 0;
+      sim.springAng = 0; sim.springVel = 0;
+      sim.x = sim.x0; sim.xdot = 0;
+      sim.targetNow = 0;
+      pidReset();
+    },
+    draw() { drawSpringPendulum(); },
+    setupRows() {
+      return [
+        slider('springK', '弹簧刚度 k', 10, 300, 5, 80, ' N/m', v => { sim.springK = v; }),
+        slider('springB', '结构阻尼 b', 0, 2, 0.05, 0.5, '', v => sim.springB = v),
+        staticRow('摆球质量 m', () => sim.pc_m.toFixed(2) + ' kg'),
+        staticRow('小车质量 M', () => sim.M.toFixed(2) + ' kg'),
+      ];
+    },
+    pidUI() {
+      // 与第三关相同的双环结构 + 弹簧参数（系统参数选项卡已移除，改为输入框）
+      return {
+        cols: [
+          [
+            pidInput('kpth', 'Kpθ', '内环·摆角增益', 1),
+            pidInput('kith', 'Kiθ', '内环·摆角积分', 0),
+            pidInput('kdth', 'Kdθ', '内环·角速度阻尼', 0),
+            pidInput('tfth', 'Tfθ', '内环 D 滤波 (s)', 0),
+            pidInput('fmax', 'F限幅', '内环·推力上限 N', 30),
+            pidInput('tfmth', 'TfMθ', '内环·角度测量滤波 (s)', 0),
+          ],
+          [
+            pidInput('kpx', 'Kpx', '外环·位置增益', 0),
+            pidInput('kix', 'Kix', '外环·位置积分', 0),
+            pidInput('kdx', 'Kdx', '外环·位置阻尼', 0),
+            pidInput('tfx', 'TfX', '外环 D 滤波 (s)', 0),
+            pidInput('threfmax', 'θref限幅', '外环·倾角上限 rad', 0.1),
+            pidInput('tfmx', 'TfMX', '外环·位置测量滤波 (s)', 0),
+          ],
+        ],
+        extras: [
+          pidInput('springk', 'k 刚度', '弹簧刚度 N/m', 80),
+          pidInput('springb', 'b 阻尼', '结构阻尼', 0.5),
+        ],
+      };
+    },
+    chips() {
+      return [
+        ['P1 I0 D0（出题默认）', [1, 0, 0, 0, 30, 0, 0, 0, 0, 0.1, 0, 0, 80, 0.5]],
+        ['参考：内环快 + 外环慢', [120, 0, 8, 0.05, 30, 0.08, 0, 0.08, 0.05, 0.1, 0, 0, 80, 0.5]],
+      ];
+    },
+    pidDefaults() { return [1, 0, 0, 0, 30, 0, 0, 0, 0, 0.1, 0, 0, 80, 0.5]; },
+    pidApply(v) { sim.KpTh = v[0]; sim.KiTh = v[1]; sim.KdTh = v[2]; sim.TfTh = v[3]; sim.fMax = v[4]; sim.KpX = v[5]; sim.KiX = v[6]; sim.KdX = v[7]; sim.TfX = v[8]; sim.thetaRefMax = v[9]; sim.measTfTh = v[10]; sim.measTfX = v[11]; sim.springK = v[12]; sim.springB = v[13]; },
+    ctrl() {
+      // 与第三关相同的串级控制（外部用弹簧摆物理）
+      const eX = -sim.obsX;
+      sim.xdF += (CTRL_DT / (CTRL_DT + sim.TfX)) * (((eX - sim.prevEX) / CTRL_DT) - sim.xdF);
+      sim.integX = clamp(sim.integX + eX * CTRL_DT, -5, 5);
+      sim.prevEX = eX; sim.hasPrevX = true;
+      sim.uKp2Now = sim.KpX * eX;
+      sim.uKi2Now = sim.KiX * sim.integX;
+      sim.uKd2Now = sim.KdX * sim.xdF;
+      const thetaRef = clamp(sim.uKp2Now + sim.uKi2Now + sim.uKd2Now, -sim.thetaRefMax, sim.thetaRefMax);
+      sim.thetaRefNow = thetaRef;
+      const eTh = sim.obsTheta - thetaRef;
+      sim.wF += (CTRL_DT / (CTRL_DT + sim.TfTh)) * ((sim.obsTheta - sim.obsThetaPrev) / CTRL_DT - sim.wF);
+      const dTh = sim.wF;
+      sim.integTh = clamp(sim.integTh + eTh * CTRL_DT, -5, 5);
+      sim.prevErr = eTh; sim.hasPrev = true;
+      sim.uKpNow = sim.KpTh * eTh;
+      sim.uKiNow = sim.KiTh * sim.integTh;
+      sim.uKdNow = sim.KdTh * dTh;
+      return clamp(sim.uKpNow + sim.uKiNow + sim.uKdNow, -sim.fMax, sim.fMax);
+    },
+    target(t) { return 0; },
+    stats() {
+      return [['摆角 θ', fmtDeg(sim.theta), 'var(--green)'],
+              ['弹性 δ', (sim.springAng * 1000).toFixed(1) + ' mm', 'var(--orange)'],
+              ['小车位置 x', (sim.x).toFixed(3) + ' m', 'var(--blue)']];
+    },
+    dragHint: '拖摆球改摆角，拖小车改位置（松手恢复动力学）',
+    chartX: true,
+  },
 };
 
 // ==================== 小工具 ====================
@@ -481,8 +573,9 @@ function fmtDeg(r) { return (r * DEG).toFixed(1) + '°'; }
 function pidReset() {
   sim.integral = 0; sim.prevErr = 0; sim.hasPrev = false; sim.prevX = 0;
   sim.prevEX = 0; sim.hasPrevX = false; // L3 外环差分复位
-  sim.integTh = 0; sim.integX = 0; // L3 双环积分复位
+  sim.integTh = 0; sim.integX = 0; // L3/L4 双环积分复位
   sim.wF = 0; sim.xdF = 0; sim.wF1 = 0; // D 项低通复位
+  sim.springAng = 0; sim.springVel = 0; // L4 弹簧复位
 }
 
 // ==================== 物理：扭矩摆（第一/二关） ====================
@@ -510,6 +603,47 @@ function stepCartPole(F) {
   sim.xdot += xAcc * PHYS_DT;
   sim.x += sim.xdot * PHYS_DT;
   // 自由移动，碰边由主循环判定失败（这里不做限位）
+}
+
+// ==================== 物理：弹簧摆（第四关） ====================
+// 小车 + 弹簧摆杆：摆杆不可伸长改为可变长度 L = L0 + δ（δ 为弹性伸长）
+// 拉格朗日 3 自由度 (x, θ, δ)，前半隐式欧拉积分（跟随 cart-pole 的风格）
+// 方程：
+//  (M+m)ẍ + mLc·θ̈ + ms·δ̈ = F + mLs·θ̇² - 2mc·δ̇θ̇
+//  mLc·ẍ + mL²·θ̈          = mgLs - 2mL·δ̇θ̇ - cθ·θ̇
+//  ms·ẍ  + m·δ̈            = mLs·θ̇² - mgc - k·δ - b·δ̇
+function stepSpringPendulum(F) {
+  const { M, pc_m: m, pc_L: L0 } = sim;
+  const s = Math.sin(sim.theta), c = Math.cos(sim.theta);
+  const L = L0 + sim.springAng;
+  const w = sim.omega, dw = sim.springVel;
+  // 3x3 线性系统 A·[ẍ, θ̈, δ̈]ᵀ = b（与验证脚本一致）
+  const a11 = M + m, a12 = m * L * c, a13 = m * s;
+  const a22 = m * L * L;
+  const b1 = F + m * L * s * w * w - 2 * m * c * dw * w;
+  const b2 = m * G * L * s - 2 * m * L * dw * w - sim.pendulumB * w;
+  const b3 = m * L * s * w * w - m * G * c - sim.springK * sim.springAng - sim.springB * dw;
+  // 克拉默法则解 3 阶
+  const detA = (a) =>
+    a[0][0] * (a[1][1] * a[2][2] - a[1][2] * a[2][1]) -
+    a[0][1] * (a[1][0] * a[2][2] - a[1][2] * a[2][0]) +
+    a[0][2] * (a[1][0] * a[2][1] - a[1][1] * a[2][0]);
+  const A = [
+    [a11, a12, a13],
+    [a12, a22, 0],
+    [a13, 0, m],
+  ];
+  const det = detA(A);
+  if (Math.abs(det) < 1e-9) return; // 数值保护
+  const xAcc = detA([[b1, a12, a13], [b2, a22, 0], [b3, 0, m]]) / det;
+  const thAcc = detA([[a11, b1, a13], [a12, b2, 0], [a13, b3, m]]) / det;
+  const dAcc = detA([[a11, a12, b1], [a12, a22, b2], [a13, 0, b3]]) / det;
+  sim.xdot += xAcc * PHYS_DT;
+  sim.x += sim.xdot * PHYS_DT;
+  sim.omega += thAcc * PHYS_DT;
+  sim.theta += sim.omega * PHYS_DT;
+  sim.springVel += dAcc * PHYS_DT;
+  sim.springAng += sim.springVel * PHYS_DT;
 }
 
 // ==================== 图表 ====================
@@ -596,7 +730,7 @@ function initChart() {
       }
     }
   });
-  $('chart-x-wrap').style.display = (sim.level === 3) ? '' : 'none';
+  $('chart-x-wrap').style.display = (sim.level >= 3) ? '' : 'none';
   // 输出分解图（L1/L2: 一张 Kp/Ki/Kd；L3: 内环 F 一张 + 外环 θref 一张）
   const ctxU = document.getElementById('chart-canvas-u').getContext('2d');
   chartU = new Chart(ctxU, {
@@ -790,6 +924,80 @@ function drawCartPole() {
   ctx.fillText('x = ' + sim.x.toFixed(3) + ' m   θ = ' + (sim.theta * DEG).toFixed(1) + '°', 12, 42);
 }
 
+// ==================== 画布：弹簧摆（第四关） ====================
+function drawSpringPendulum() {
+  ctx.clearRect(0, 0, cvW, cvH);
+  // 网格
+  ctx.strokeStyle = '#1d2740'; ctx.lineWidth = 1;
+  for (let y = 40; y < cvH; y += 40) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(cvW, y); ctx.stroke(); }
+  for (let x = 0; x < cvW; x += 40) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, cvH); ctx.stroke(); }
+
+  const groundY = 380;
+  const xscale = L3_XSCALE;
+  const cx = cvW / 2 + sim.x * xscale;
+  const edgeL = cvW / 2 - 5 * xscale;
+  const edgeR = cvW / 2 + 5 * xscale;
+
+  // 轨道与原点/边界（同 cart-pole）
+  ctx.strokeStyle = '#3a4763'; ctx.lineWidth = 4;
+  ctx.beginPath(); ctx.moveTo(10, groundY + 18); ctx.lineTo(cvW - 10, groundY + 18); ctx.stroke();
+  ctx.strokeStyle = '#4fc3f7'; ctx.lineWidth = 2; ctx.setLineDash([4, 4]);
+  ctx.beginPath(); ctx.moveTo(cvW / 2, groundY - 20); ctx.lineTo(cvW / 2, groundY + 30); ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.strokeStyle = 'rgba(255,107,107,.55)'; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.moveTo(edgeL, 40); ctx.lineTo(edgeL, groundY + 30); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(edgeR, 40); ctx.lineTo(edgeR, groundY + 30); ctx.stroke();
+
+  // 小车
+  const carW = 90, carH = 34;
+  ctx.fillStyle = '#3d4b6b';
+  ctx.fillRect(cx - carW / 2, groundY - carH, carW, carH);
+  ctx.strokeStyle = '#e8ecf3'; ctx.lineWidth = 1.5;
+  ctx.strokeRect(cx - carW / 2, groundY - carH, carW, carH);
+  ctx.fillStyle = '#222c40';
+  ctx.beginPath(); ctx.arc(cx - 25, groundY + 3, 8, 0, 2 * Math.PI); ctx.fill();
+  ctx.beginPath(); ctx.arc(cx + 25, groundY + 3, 8, 0, 2 * Math.PI); ctx.fill();
+
+  // 弹簧摆：从车顶起，长度 L = L0 + δ，画波浪弹簧线
+  const px = cx, py = groundY - carH;
+  const Lpx = (sim.pc_L + sim.springAng) * SCALE;
+  const endX = px + Lpx * Math.sin(sim.theta);
+  const endY = py - Lpx * Math.cos(sim.theta);
+  // 波浪线（弹簧示意）
+  ctx.strokeStyle = '#e8ecf3'; ctx.lineWidth = 4; ctx.lineCap = 'round';
+  ctx.beginPath();
+  const segs = 28;
+  for (let i = 0; i <= segs; i++) {
+    const t = i / segs;
+    const sx = px + (endX - px) * t;
+    const sy = py + (endY - py) * t;
+    const perp = (i > 0 && i < segs) ? Math.sin(i * Math.PI * 3) * 8 * ((i % 2) ? 1 : 1) : 0;
+    const nx = -(endY - py) / (Math.hypot(endX - px, endY - py) || 1);
+    const ny = (endX - px) / (Math.hypot(endX - px, endY - py) || 1);
+    if (i === 0) ctx.moveTo(sx, sy);
+    else ctx.lineTo(sx + nx * perp, sy + ny * perp);
+  }
+  ctx.stroke();
+  ctx.lineCap = 'butt';
+
+  // 摆球
+  const r = 14;
+  const grad = ctx.createRadialGradient(endX - r * 0.3, endY - r * 0.3, r * 0.2, endX, endY, r);
+  grad.addColorStop(0, '#ffd28a'); grad.addColorStop(1, '#ff8f3d');
+  ctx.fillStyle = grad;
+  ctx.beginPath(); ctx.arc(endX, endY, r, 0, 2 * Math.PI); ctx.fill();
+  ctx.strokeStyle = '#4d2e12'; ctx.lineWidth = 1.5; ctx.stroke();
+
+  // 枢轴
+  ctx.fillStyle = '#4fc3f7';
+  ctx.beginPath(); ctx.arc(px, py, 6, 0, 2 * Math.PI); ctx.fill();
+
+  // 标注（含弹簧伸长量）
+  ctx.fillStyle = '#8b96a8'; ctx.font = '12px sans-serif';
+  ctx.fillText('m = ' + sim.pc_m.toFixed(2) + ' kg  M = ' + sim.M.toFixed(2) + ' kg  k = ' + sim.springK.toFixed(0) + ' N/m', 12, 24);
+  ctx.fillText('x = ' + sim.x.toFixed(3) + ' m   θ = ' + (sim.theta * DEG).toFixed(1) + '°   δ = ' + (sim.springAng * 1000).toFixed(1) + ' mm', 12, 42);
+}
+
 // ==================== 拖拽 ====================
 function canvasPoint(e) {
   const rect = cv.getBoundingClientRect();
@@ -804,13 +1012,14 @@ function angleFrom(p, px, py) {
 }
 cv.addEventListener('pointerdown', (e) => {
   const p = canvasPoint(e);
-  if (sim.level === 3) {
+  if (sim.level === 3 || sim.level === 4) {
     // 先判定摆球
     const groundY = 380, xscale = L3_XSCALE;
     const cx = cvW / 2 + sim.x * xscale;
     const py = groundY - 34;
-    const endX = cx + sim.pc_L * SCALE * Math.sin(sim.theta);
-    const endY = py - sim.pc_L * SCALE * Math.cos(sim.theta);
+    const Lpx = sim.level === 4 ? (sim.pc_L + sim.springAng) * SCALE : sim.pc_L * SCALE;
+    const endX = cx + Lpx * Math.sin(sim.theta);
+    const endY = py - Lpx * Math.cos(sim.theta);
     const dBall = Math.hypot(p.x - endX, p.y - endY);
     const dCar = Math.hypot(p.x - cx, p.y - (groundY - 17));
     if (dBall < 40) { sim.dragging = 'ball'; }
@@ -826,19 +1035,21 @@ cv.addEventListener('pointerdown', (e) => {
   }
 });
 cv.addEventListener('pointermove', (e) => {
-  if (sim.level === 3) {
+  if (sim.level === 3 || sim.level === 4) {
     if (sim.dragging === 'ball') {
       const groundY = 380, xscale = L3_XSCALE;
       const cx = cvW / 2 + sim.x * xscale;
       const py = groundY - 34;
       sim.theta = clamp(angleFrom(canvasPoint(e), cx, py), -Math.PI, Math.PI);
       sim.omega = 0;
-      drawCartPole();
+      if (sim.level === 4) { sim.springVel = 0; drawSpringPendulum(); }
+      else drawCartPole();
     } else if (sim.dragging === 'car') {
       const xscale = L3_XSCALE;
       sim.x = clamp((canvasPoint(e).x - cvW / 2) / xscale, -(sim.trackMax - 0.1), sim.trackMax - 0.1);
       sim.xdot = 0;
-      drawCartPole();
+      if (sim.level === 4) drawSpringPendulum();
+      else drawCartPole();
     }
   } else if (sim.dragging === 'ball') {
     // 拖动角度映射为「与当前连续角度最接近的等价角度」：
@@ -908,7 +1119,7 @@ function pidInput(id, name, sub, def) {
         <div class="n">${sub}</div>`;
       const inp = item.querySelector('input');
       // 数值生效 + 限幅都在失去焦点（回车/点别处）后执行，避免输入过程中实时改参数
-      const LIMITS = { umax: [1, 100], fmax: [1, 100], threfmax: [0.01, 0.5] };
+      const LIMITS = { umax: [1, 100], fmax: [1, 100], threfmax: [0.01, 0.5], springk: [1, 1000], springb: [0, 5] };
       let lastApplied = def;   // 最近一次生效值（用于非法输入时回显）
       const applyValue = () => {
         const v = parseFloat(inp.value);
@@ -943,6 +1154,10 @@ function buildLevelUI() {
     3: { kpth: v => sim.KpTh = v, kith: v => sim.KiTh = v, kdth: v => sim.KdTh = v, tfth: v => sim.TfTh = v, fmax: v => sim.fMax = v,
          kpx: v => sim.KpX = v, kix: v => sim.KiX = v, kdx: v => sim.KdX = v, tfx: v => sim.TfX = v, threfmax: v => sim.thetaRefMax = v,
          tfmth: v => sim.measTfTh = v, tfmx: v => sim.measTfX = v },
+    4: { kpth: v => sim.KpTh = v, kith: v => sim.KiTh = v, kdth: v => sim.KdTh = v, tfth: v => sim.TfTh = v, fmax: v => sim.fMax = v,
+        kpx: v => sim.KpX = v, kix: v => sim.KiX = v, kdx: v => sim.KdX = v, tfx: v => sim.TfX = v, threfmax: v => sim.thetaRefMax = v,
+        tfmth: v => sim.measTfTh = v, tfmx: v => sim.measTfX = v,
+        springk: v => sim.springK = v, springb: v => sim.springB = v },
   };
   onInputHook = (v, id) => { const f = inputMap[sim.level][id]; if (f) f(v); };
   const ui = L.pidUI();
@@ -985,20 +1200,20 @@ function buildLevelUI() {
   updateStats();
   // 图表：L1/L2 隐藏第二张位置图
   if (chartX) {
-    $('chart-x-wrap').style.display = (sim.level === 3) ? '' : 'none';
+    $('chart-x-wrap').style.display = (sim.level >= 3) ? '' : 'none';
     chartX.update('none');
   }
   // 输出分解图：L1/L2 一张；L3 两张（内环 F + 外环 θref）
   if (chartU) {
     $('chart-u-wrap').style.display = '';
-    $('chart-u-title').textContent = (sim.level === 3)
+    $('chart-u-title').textContent = (sim.level === 3 || sim.level === 4)
       ? '内环 F 分量（N）'
       : 'Kp / Ki / Kd 分量 (N·m)';
-    chartU.options.scales.y.title.text = (sim.level === 3) ? 'F (N)' : 'u (N·m)';
+    chartU.options.scales.y.title.text = (sim.level === 3 || sim.level === 4) ? 'F (N)' : 'u (N·m)';
     chartU.update('none');
   }
   if (chartU2) {
-    $('chart-u2-wrap').style.display = (sim.level === 3) ? '' : 'none';
+    $('chart-u2-wrap').style.display = (sim.level >= 3) ? '' : 'none';
     chartU2.update('none');
   }
 }
@@ -1009,6 +1224,7 @@ function refreshPidUI() {
     1: [sim.Kp, sim.Ki, sim.Kd, sim.uMax, sim.Tf1, sim.measTfTh],
     2: [sim.Kp, sim.Ki, sim.Kd, sim.uMax, sim.Tf1, sim.measTfTh],
     3: [sim.KpTh, sim.KiTh, sim.KdTh, sim.TfTh, sim.fMax, sim.KpX, sim.KiX, sim.KdX, sim.TfX, sim.thetaRefMax, sim.measTfTh, sim.measTfX],
+    4: [sim.KpTh, sim.KiTh, sim.KdTh, sim.TfTh, sim.fMax, sim.KpX, sim.KiX, sim.KdX, sim.TfX, sim.thetaRefMax, sim.measTfTh, sim.measTfX, sim.springK, sim.springB],
   }[sim.level];
   const ui = L.pidUI();
   const items = Array.isArray(ui) ? ui : [...ui.cols[0], ...ui.cols[1], ...(ui.extras || [])];
@@ -1085,7 +1301,7 @@ $('btn-reset').addEventListener('click', () => {
   setRunningUI();
 });
 $('btn-random').addEventListener('click', () => {
-  if (sim.level === 3) sim.pc_m = randomMass(0.3, 1.0);
+  if (sim.level === 3 || sim.level === 4) sim.pc_m = randomMass(0.3, 1.0);
   else sim.m = randomMass(0.6, 1.8);
   refreshMass();
   if (!sim.running) applyInitial();
@@ -1132,9 +1348,9 @@ function stepSim(now) {
   for (let t = 0; t < realDt; t += CTRL_DT) {
     // ① 采样观测（带噪声）→ 测量值低通（作用于源头，整个 PID 用滤波后的值）
     sim.obsThetaPrev = sim.obsTheta;
-    const rawTh = sim.theta + (sim.level === 3 ? sim.noiseSigmaTh : sim.noiseSigma) * gauss();
+    const rawTh = sim.theta + ((sim.level === 3 || sim.level === 4) ? sim.noiseSigmaTh : sim.noiseSigma) * gauss();
     sim.obsTheta = sim.obsTheta + aMTh * (rawTh - sim.obsTheta);
-    const rawX = sim.x + (sim.level === 3 ? sim.noiseSigmaX : sim.noiseSigma * 0.4) * gauss();
+    const rawX = sim.x + ((sim.level === 3 || sim.level === 4) ? sim.noiseSigmaX : sim.noiseSigma * 0.4) * gauss();
     sim.obsX = sim.obsX + aMX * (rawX - sim.obsX);
     // ② 目标 + 控制（各关内自行维护积分/差分状态）
     sim.targetNow = L.target(sim.t);
@@ -1144,10 +1360,11 @@ function stepSim(now) {
     const steps = Math.round(CTRL_DT / PHYS_DT);
     for (let s = 0; s < steps; s++) {
       if (sim.level === 3) stepCartPole(u);
+      else if (sim.level === 4) stepSpringPendulum(u);
       else stepPendulum(u);
     }
     // ⑤ L3 碰边检测：出 ±5m 即失败，暂停等待重置
-    if (sim.level === 3 && Math.abs(sim.x) > sim.trackMax) {
+    if ((sim.level === 3 || sim.level === 4) && Math.abs(sim.x) > sim.trackMax) {
       sim.failed = true;
       sim.running = false;
       sim.paused = false;
@@ -1233,7 +1450,7 @@ function computeResults() {
     return out;
   }
   // L1/L3：真值误差（L3 用位置误差 x-0）
-  const eArr = sim.bufTrue.map((v, i) => (v - sim.bufTgt[i]) * (sim.level === 3 ? 1 : DEG));
+  const eArr = sim.bufTrue.map((v, i) => (v - sim.bufTgt[i]) * ((sim.level === 3 || sim.level === 4) ? 1 : DEG));
   // RMSE（t>=5s）
   let s2 = 0, cnt = 0;
   for (let i = 0; i < n; i++) {
@@ -1245,7 +1462,7 @@ function computeResults() {
   for (let i = 0; i < n; i++) { const a = Math.abs(eArr[i]); if (a > pk) pk = a; }
   out.peak = pk;
   // 稳态带进入时间：连续 3s 不出带才算进入（L1 角度 2°、L3 位置 0.05m）
-  const band = (sim.level === 3) ? 0.05 : 2;
+  const band = (sim.level === 3 || sim.level === 4) ? 0.05 : 2;
   const HOLD_S = 3;                       // 确认时间
   const holdIdx = Math.round(HOLD_S / CTRL_DT);
   let settleT = null;
@@ -1281,12 +1498,12 @@ function updateResult() {
     note.textContent = '定义：最近一整圈（目标角跨 360°）内跟踪误差的均方根，随仿真滚动刷新（Ki 需要非零才能消稳定滞后）';
     return;
   }
-  const unit = (sim.level === 3) ? ' m' : '°';
+  const unit = (sim.level === 3 || sim.level === 4) ? ' m' : '°';
   el.innerHTML =
     `<div class="stat"><div class="v" style="color:var(--green);">${r.rmse === null ? '--' : r.rmse.toFixed(3)}${unit}</div><div class="l">5s 均方稳态误差</div></div>` +
     `<div class="stat"><div class="v" style="color:var(--blue);">${r.peak === null ? '--' : r.peak.toFixed(3)}${unit}</div><div class="l">峰值误差</div></div>` +
     `<div class="stat"><div class="v" style="color:var(--orange);">${r.settle === null ? '未确认' : r.settle.toFixed(2) + 's'}</div><div class="l">稳态带进入时间</div></div>`;
-  note.textContent = (sim.level === 3)
+  note.textContent = (sim.level >= 3)
     ? '稳态带：|x| < 0.05m 且连续 3s 不出带；均方稳态误差取 t≥5s 的真值位置误差'
     : '稳态带：|θ|<2° 且连续 3s 不出带；均方稳态误差取 t≥5s 的真值角度误差';
 }
@@ -1305,7 +1522,7 @@ function init() {
   let params = new URLSearchParams(location.search);
   if (params.get('lvl')) {
     const lvl = parseInt(params.get('lvl'));
-    if (lvl >= 1 && lvl <= 3) {
+    if (lvl >= 1 && lvl <= 4) {
       sim.level = lvl;
       document.querySelectorAll('.level-btn').forEach(b => b.classList.toggle('active', parseInt(b.dataset.lvl) === lvl));
       buildLevelUI();
